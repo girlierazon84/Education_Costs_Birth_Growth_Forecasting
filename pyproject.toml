@@ -1,0 +1,49 @@
+# /pyproject.toml
+
+[project]
+name = "eduforecast"
+version = "0.1.0"
+description = "Education costs & birth growth forecasting pipeline"
+readme = "README.md"
+requires-python = ">=3.11"
+dependencies = [
+    "pandas>=2.2",
+    "numpy>=2.0",
+    "pyyaml>=6.0",
+    "pydantic>=2.7",
+    "python-dotenv>=1.0",
+    "typer>=0.12",
+    "rich>=13.7",
+    "joblib>=1.4",
+    "scikit-learn>=1.5",
+    "statsmodels>=0.14",
+    "matplotlib>=3.9",
+    "plotly>=5.22",
+    "pandera>=0.20",
+    "streamlit>=1.39",
+]
+
+[project.scripts]
+eduforecast = "eduforecast.cli:app"
+
+[build-system]
+requires = ["setuptools>=69"]
+build-backend = "setuptools.build_meta"
+
+[tool.setuptools]
+package-dir = {"" = "src"}
+
+[tool.setuptools.packages.find]
+where = ["src"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+addopts = "-q"
+
+[tool.ruff]
+line-length = 100
+target-version = "py311"
+
+[tool.ruff.lint]
+select = ["E", "F", "I", "B", "UP"]
+ignore = ["E501"]
