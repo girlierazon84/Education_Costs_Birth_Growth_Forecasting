@@ -1,0 +1,40 @@
+# configs/params/modeling.yaml
+# Modeling and evaluation configuration.
+
+modeling:
+  # Candidate models implemented in src/eduforecast/modeling/
+  candidates:
+    - "baseline_naive"
+    - "linear_regression"
+    - "random_forest"
+    - "arima"
+    - "exp_smoothing"
+
+  # Primary metric used to select "best" model per region
+  metric_primary: "rmse"
+
+  # Secondary metrics (optional)
+  metrics_secondary: ["mae", "smape"]
+
+  # Cross-validation settings (time-series aware in your implementation)
+  cv:
+    enabled: true
+    n_splits: 5
+    test_size_years: 3
+    gap_years: 0
+    shuffle: false
+
+  # Reproducibility
+  random_seed: 42
+
+  # Output artifact names (relative to artifacts/)
+  outputs:
+    best_models_births: "artifacts/metrics/best_models_births.csv"
+    model_scores_births: "artifacts/metrics/model_scores_births.csv"
+    forecast_summary_births: "artifacts/metrics/forecast_summary_births.csv"
+
+  # Guardrails / sanity checks (helps catch suspicious winners)
+  sanity_checks:
+    enabled: true
+    max_abs_yoy_change_pct: 30.0
+    enforce_non_negative: true
