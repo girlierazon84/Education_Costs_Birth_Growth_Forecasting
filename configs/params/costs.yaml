@@ -1,0 +1,35 @@
+# configs/params/costs.yaml
+# Cost parameters used by the education cost calculator.
+
+costs:
+  currency: "SEK"
+
+  # Choose how to extend costs beyond the last observed year in the cost tables.
+  # Options:
+  #   - "carry_forward": hold last known cost constant
+  #   - "growth_rate": grow last known cost forward by annual_growth_rate
+  extrapolation: "growth_rate"
+  annual_growth_rate: 0.025
+
+  # Anchor year for keeping a realistic split between "fixed" and "current" bases.
+  # We use an anchor where both series exist and are meaningful (e.g., 2021).
+  # If null, pipeline uses the latest available row from each cost table.
+  anchor_year: 2021
+
+  # Age ranges used for counting "students" from population forecasts.
+  # Adjust if you change your cohort logic.
+  grundskola_ages: [7, 16]      # inclusive range 7–16
+  gymnasieskola_ages: [17, 19]  # inclusive range 17–19
+
+  # External cost tables (relative to project root)
+  grundskola_cost_table: "data/external/grundskola_costs_per_child.csv"
+  gymnasieskola_cost_table: "data/external/gymnasieskola_costs_per_child.csv"
+
+  # Optional CPI adjustment (keep off unless you have CPI data wired in)
+  use_cpi_adjustment: false
+  cpi_table: null
+
+  # Output controls
+  output:
+    round_students: false      # keep float for "statistical" outputs
+    round_costs: false         # keep float
