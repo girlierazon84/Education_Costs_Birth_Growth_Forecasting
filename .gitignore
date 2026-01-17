@@ -1,0 +1,88 @@
+# =========================
+# Python
+# =========================
+__pycache__/
+*.py[cod]
+*.pyo
+*.pyd
+*.so
+*.pkl
+*.joblib
+*.pickle
+
+# Virtual environments
+.venv/
+venv/
+ENV/
+env/
+
+# Python tooling
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+.pyre/
+.pytype/
+.cache/
+coverage/
+.coverage
+htmlcov/
+
+# Jupyter / notebooks
+.ipynb_checkpoints/
+*.ipynb
+
+# =========================
+# OS / editor
+# =========================
+.DS_Store
+Thumbs.db
+Desktop.ini
+
+.vscode/
+.idea/
+*.swp
+*.swo
+
+# =========================
+# Streamlit
+# =========================
+.streamlit/secrets.toml
+
+# =========================
+# Logs
+# =========================
+*.log
+
+# =========================
+# Data & artifacts (choose what to keep)
+# =========================
+
+# Raw downloads / large datasets (usually not committed)
+data/raw/**
+data/interim/**
+data/processed/**
+
+# If you WANT to keep the forecast CSVs in git for Streamlit Cloud,
+# comment OUT the artifacts/** ignore above and use this instead:
+# artifacts/**
+# !artifacts/forecasts/
+# !artifacts/forecasts/*.csv
+# !artifacts/metrics/
+# !artifacts/metrics/*.csv
+# !artifacts/.gitkeep
+
+# =========================
+# Build / distribution
+# =========================
+build/
+dist/
+*.egg-info/
+
+# =========================
+# Env files / secrets
+# =========================
+.env
+.env.*
+*.key
+*.pem
+*.p12
