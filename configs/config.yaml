@@ -1,0 +1,80 @@
+# configs/config.yaml
+
+project:
+  name: eduforecast
+  timezone: "Europe/Stockholm"
+
+paths:
+  data_dir: "data"
+  raw_dir: "data/raw"
+  interim_dir: "data/interim"
+  processed_dir: "data/processed"
+  external_dir: "data/external"
+  artifacts_dir: "artifacts"
+  models_dir: "artifacts/models"
+  metrics_dir: "artifacts/metrics"
+  forecasts_dir: "artifacts/forecasts"
+  figures_dir: "artifacts/figures"
+
+database:
+  # Works for SQLite. For Postgres later, you can switch to a SQLAlchemy URL.
+  sqlite_path: "data/processed/population_education_costs.db"
+
+forecast:
+  start_year: 2024
+  end_year: 2030
+  horizon_years: 7
+  # Example: cohort ages you care about
+  ages: [0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17, 18, 19]
+
+regions:
+  # Keep this in sync with your SCB region codes.
+  include:
+    - "01"  # Stockholms län
+    - "03"  # Uppsala län
+    - "04"  # Södermanlands län
+    - "05"  # Östergötlands län
+    - "06"  # Jönköpings län
+    - "07"  # Kronobergs län
+    - "08"  # Kalmar län
+    - "09"  # Gotlands län
+    - "10"  # Blekinge län
+    - "12"  # Skåne län
+    - "13"  # Hallands län
+    - "14"  # Västra Götalands län
+    - "17"  # Värmlands län
+    - "18"  # Örebro län
+    - "19"  # Västmanlands län
+    - "20"  # Dalarnas län
+    - "21"  # Gävleborgs län
+    - "22"  # Västernorrlands län
+    - "23"  # Jämtlands län
+    - "24"  # Västerbottens län
+    - "25"  # Norrbottens län
+
+modeling:
+  start_year: 1968
+  # A simple "registry" concept. You can implement these names in src/eduforecast/modeling/.
+  candidates:
+    - "baseline_naive"
+    - "linear_regression"
+    - "random_forest"
+    - "arima"
+    - "exp_smoothing"
+  metric_primary: "rmse"
+  cv:
+    enabled: true
+    n_splits: 5
+
+costs:
+  extrapolation: growth_rate
+  annual_growth_rate: 0.025
+  anchor_max_year: 2021   # <= NEW: cap cost tables at this year (use as anchor)
+  currency: "SEK"
+  use_cpi_adjustment: false
+  grundskola_cost_table: "data/external/grundskola_costs_per_child.csv"
+  gymnasieskola_cost_table: "data/external/gymnasieskola_costs_per_child.csv"
+
+logging:
+  level: "INFO"
+  file: "artifacts/eduforecast.log"
