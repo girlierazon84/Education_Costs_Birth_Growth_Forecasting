@@ -1,0 +1,42 @@
+# configs/params/features.yaml
+# Feature and data-prep switches for modeling and forecasting.
+
+features:
+  # Historical window for training
+  start_year: 1968
+  end_year: 2023
+
+  # Forecast window
+  forecast_start_year: 2024
+  forecast_end_year: 2030
+
+  # Core cohorts (0–19) used across population & costs
+  ages: [0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17, 18, 19]
+
+  # Region schema
+  region_code_width: 2
+  keep_region_names: true
+
+  # Optional feature switches (safe defaults)
+  use_migration: false
+  use_mortality: false
+  use_cohort_transitions: false
+
+  # Time-series feature engineering
+  lags:
+    enabled: true
+    values: [1, 2, 3, 5]
+
+  rolling:
+    enabled: true
+    windows: [3, 5]
+
+  # Scaling/transform options (apply inside ML pipelines)
+  transforms:
+    log1p_target: false
+    standardize_numeric: true
+
+  # Missing data handling
+  missing:
+    strategy: "interpolate"   # options: "drop", "zero", "interpolate"
+    interpolate_method: "linear"
