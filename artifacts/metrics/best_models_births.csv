@@ -1,22 +1,22 @@
 Region_Code,Region_Name,Best_Model,Model_Path
-01,Stockholms Län,baseline_naive,C:\Users\girli\OneDrive\Desktop\Portfolio-Projects\Education_Costs_Birth_Growth_Forecasting\artifacts\models\births\births_01_baseline_naive.joblib
-03,Uppsala Län,baseline_naive,C:\Users\girli\OneDrive\Desktop\Portfolio-Projects\Education_Costs_Birth_Growth_Forecasting\artifacts\models\births\births_03_baseline_naive.joblib
-04,Södermanlands Län,exp_smoothing,C:\Users\girli\OneDrive\Desktop\Portfolio-Projects\Education_Costs_Birth_Growth_Forecasting\artifacts\models\births\births_04_exp_smoothing.joblib
-05,Östergötlands Län,exp_smoothing,C:\Users\girli\OneDrive\Desktop\Portfolio-Projects\Education_Costs_Birth_Growth_Forecasting\artifacts\models\births\births_05_exp_smoothing.joblib
-06,Jönköpings Län,exp_smoothing,C:\Users\girli\OneDrive\Desktop\Portfolio-Projects\Education_Costs_Birth_Growth_Forecasting\artifacts\models\births\births_06_exp_smoothing.joblib
-07,Kronobergs Län,exp_smoothing,C:\Users\girli\OneDrive\Desktop\Portfolio-Projects\Education_Costs_Birth_Growth_Forecasting\artifacts\models\births\births_07_exp_smoothing.joblib
-08,Kalmar Län,baseline_naive,C:\Users\girli\OneDrive\Desktop\Portfolio-Projects\Education_Costs_Birth_Growth_Forecasting\artifacts\models\births\births_08_baseline_naive.joblib
-09,Gotlands Län,exp_smoothing,C:\Users\girli\OneDrive\Desktop\Portfolio-Projects\Education_Costs_Birth_Growth_Forecasting\artifacts\models\births\births_09_exp_smoothing.joblib
-10,Blekinge Län,exp_smoothing,C:\Users\girli\OneDrive\Desktop\Portfolio-Projects\Education_Costs_Birth_Growth_Forecasting\artifacts\models\births\births_10_exp_smoothing.joblib
-12,Skåne Län,exp_smoothing,C:\Users\girli\OneDrive\Desktop\Portfolio-Projects\Education_Costs_Birth_Growth_Forecasting\artifacts\models\births\births_12_exp_smoothing.joblib
-13,Hallands Län,exp_smoothing,C:\Users\girli\OneDrive\Desktop\Portfolio-Projects\Education_Costs_Birth_Growth_Forecasting\artifacts\models\births\births_13_exp_smoothing.joblib
-14,Västra götalands Län,exp_smoothing,C:\Users\girli\OneDrive\Desktop\Portfolio-Projects\Education_Costs_Birth_Growth_Forecasting\artifacts\models\births\births_14_exp_smoothing.joblib
-17,Värmlands Län,exp_smoothing,C:\Users\girli\OneDrive\Desktop\Portfolio-Projects\Education_Costs_Birth_Growth_Forecasting\artifacts\models\births\births_17_exp_smoothing.joblib
-18,Örebro Län,baseline_naive,C:\Users\girli\OneDrive\Desktop\Portfolio-Projects\Education_Costs_Birth_Growth_Forecasting\artifacts\models\births\births_18_baseline_naive.joblib
-19,Västmanlands Län,exp_smoothing,C:\Users\girli\OneDrive\Desktop\Portfolio-Projects\Education_Costs_Birth_Growth_Forecasting\artifacts\models\births\births_19_exp_smoothing.joblib
-20,Dalarnas Län,exp_smoothing,C:\Users\girli\OneDrive\Desktop\Portfolio-Projects\Education_Costs_Birth_Growth_Forecasting\artifacts\models\births\births_20_exp_smoothing.joblib
-21,Gävleborgs Län,exp_smoothing,C:\Users\girli\OneDrive\Desktop\Portfolio-Projects\Education_Costs_Birth_Growth_Forecasting\artifacts\models\births\births_21_exp_smoothing.joblib
-22,Västernorrlands Län,baseline_naive,C:\Users\girli\OneDrive\Desktop\Portfolio-Projects\Education_Costs_Birth_Growth_Forecasting\artifacts\models\births\births_22_baseline_naive.joblib
-23,Jämtlands Län,exp_smoothing,C:\Users\girli\OneDrive\Desktop\Portfolio-Projects\Education_Costs_Birth_Growth_Forecasting\artifacts\models\births\births_23_exp_smoothing.joblib
-24,Västerbottens Län,exp_smoothing,C:\Users\girli\OneDrive\Desktop\Portfolio-Projects\Education_Costs_Birth_Growth_Forecasting\artifacts\models\births\births_24_exp_smoothing.joblib
-25,Norrbottens Län,baseline_naive,C:\Users\girli\OneDrive\Desktop\Portfolio-Projects\Education_Costs_Birth_Growth_Forecasting\artifacts\models\births\births_25_baseline_naive.joblib
+01,Stockholms län,exp_smoothing,artifacts\models\births\births_01_exp_smoothing.joblib
+03,Uppsala län,baseline_naive,artifacts\models\births\births_03_baseline_naive.joblib
+04,Södermanlands län,drift,artifacts\models\births\births_04_drift.joblib
+05,Östergötlands län,exp_smoothing,artifacts\models\births\births_05_exp_smoothing.joblib
+06,Jönköpings län,drift,artifacts\models\births\births_06_drift.joblib
+07,Kronobergs län,drift,artifacts\models\births\births_07_drift.joblib
+08,Kalmar län,drift,artifacts\models\births\births_08_drift.joblib
+09,Gotlands län,drift,artifacts\models\births\births_09_drift.joblib
+10,Blekinge län,drift,artifacts\models\births\births_10_drift.joblib
+12,Skåne län,exp_smoothing,artifacts\models\births\births_12_exp_smoothing.joblib
+13,Hallands län,baseline_naive,artifacts\models\births\births_13_baseline_naive.joblib
+14,Västra Götalands län,exp_smoothing,artifacts\models\births\births_14_exp_smoothing.joblib
+17,Värmlands län,drift,artifacts\models\births\births_17_drift.joblib
+18,Örebro län,exp_smoothing,artifacts\models\births\births_18_exp_smoothing.joblib
+19,Västmanlands län,drift,artifacts\models\births\births_19_drift.joblib
+20,Dalarnas län,drift,artifacts\models\births\births_20_drift.joblib
+21,Gävleborgs län,drift,artifacts\models\births\births_21_drift.joblib
+22,Västernorrlands län,exp_smoothing,artifacts\models\births\births_22_exp_smoothing.joblib
+23,Jämtlands län,drift,artifacts\models\births\births_23_drift.joblib
+24,Västerbottens län,drift,artifacts\models\births\births_24_drift.joblib
+25,Norrbottens län,drift,artifacts\models\births\births_25_drift.joblib
