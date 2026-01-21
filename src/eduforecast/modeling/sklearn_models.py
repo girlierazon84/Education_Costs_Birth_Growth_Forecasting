@@ -11,10 +11,13 @@ import numpy as np
 @dataclass(frozen=True)
 class SklearnWrapper:
     """
-    Optional adapter if you later use sklearn models.
-    For pure time-series forecasts you usually need feature engineering (X).
+    Optional adapter for sklearn regressors.
+
+    NOTE:
+    This is NOT compatible with the pure time-series interface (predict(steps=...))
+    unless you implement feature engineering to build X for future steps.
     """
     model: Any
 
-    def predict(self, X: np.ndarray) -> np.ndarray:
+    def predict_X(self, X: np.ndarray) -> np.ndarray:
         return np.asarray(self.model.predict(X), dtype=float)
