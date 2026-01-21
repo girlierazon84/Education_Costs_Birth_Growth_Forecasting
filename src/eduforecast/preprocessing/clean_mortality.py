@@ -42,6 +42,7 @@ def clean_mortality(df: pd.DataFrame) -> pd.DataFrame:
         .str.replace(r"\.0$", "", regex=True)
         .str.zfill(2)
     )
+
     if "Region_Name" not in d.columns:
         d["Region_Name"] = d["Region_Code"]
     d["Region_Name"] = d["Region_Name"].astype(str).str.strip()
@@ -54,6 +55,8 @@ def clean_mortality(df: pd.DataFrame) -> pd.DataFrame:
     d["Age"] = d["Age"].astype(int)
     d["Year"] = d["Year"].astype(int)
 
-    return d[["Region_Code", "Region_Name", "Age", "Year", "Number"]].sort_values(
-        ["Region_Code", "Age", "Year"]
-    ).reset_index(drop=True)
+    return (
+        d[["Region_Code", "Region_Name", "Age", "Year", "Number"]]
+        .sort_values(["Region_Code", "Age", "Year"])
+        .reset_index(drop=True)
+    )
