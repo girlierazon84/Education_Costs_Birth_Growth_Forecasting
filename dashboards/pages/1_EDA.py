@@ -10,31 +10,8 @@ import streamlit as st
 import plotly.express as px
 
 from eduforecast.io.readers import read_births_raw, read_costs_per_child
-
-
-REGION_CODE_TO_NAME = {
-    "01": "Stockholms län",
-    "03": "Uppsala län",
-    "04": "Södermanlands län",
-    "05": "Östergötlands län",
-    "06": "Jönköpings län",
-    "07": "Kronobergs län",
-    "08": "Kalmar län",
-    "09": "Gotlands län",
-    "10": "Blekinge län",
-    "12": "Skåne län",
-    "13": "Hallands län",
-    "14": "Västra Götalands län",
-    "17": "Värmlands län",
-    "18": "Örebro län",
-    "19": "Västmanlands län",
-    "20": "Dalarnas län",
-    "21": "Gävleborgs län",
-    "22": "Västernorrlands län",
-    "23": "Jämtlands län",
-    "24": "Västerbottens län",
-    "25": "Norrbottens län",
-}
+from eduforecast.preprocessing.clean_births import clean_births
+from eduforecast.preprocessing.clean_costs import clean_costs_per_child
 
 
 def project_root() -> Path:
@@ -62,36 +39,17 @@ def to_csv_bytes(df: pd.DataFrame) -> bytes:
     return buf.getvalue().encode("utf-8")
 
 
-def _apply_region_name_fallback(births: pd.DataFrame) -> pd.DataFrame:
-    """Fix cases where Region_Name is missing or equals the code (e.g. '01 — 01')."""
-    b = births.copy()
-    b["Region_Code"] = b["Region_Code"].astype("string").str.strip().str.zfill(2)
-
-    if "Region_Name" not in b.columns:
-        b["Region_Name"] = pd.NA
-
-    b["Region_Name"] = b["Region_Name"].astype("string").str.strip()
-    b["Region_Name"] = b["Region_Name"].mask(
-        b["Region_Name"].isna()
-        | (b["Region_Name"] == "")
-        | (b["Region_Name"] == b["Region_Code"]),
-        b["Region_Code"].map(REGION_CODE_TO_NAME),
-    )
-    b["Region_Name"] = b["Region_Name"].fillna(b["Region_Code"]).astype(str)
-    return b
-
-
 @st.cache_data(show_spinner=False)
 def load_births() -> pd.DataFrame:
-    births = read_births_raw(project_root() / "data" / "raw" / "birth_data_per_region.csv")
-    return _apply_region_name_fallback(births)
+    raw = read_births_raw(project_root() / "data" / "raw" / "birth_data_per_region.csv")
+    return clean_births(raw)
 
 
 @st.cache_data(show_spinner=False)
 def load_costs_external() -> tuple[pd.DataFrame, pd.DataFrame]:
-    grund = read_costs_per_child(project_root() / "data" / "external" / "grundskola_costs_per_child.csv")
-    gymn = read_costs_per_child(project_root() / "data" / "external" / "gymnasieskola_costs_per_child.csv")
-    return grund, gymn
+    grund_raw = read_costs_per_child(project_root() / "data" / "external" / "grundskola_costs_per_child.csv")
+    gymn_raw = read_costs_per_child(project_root() / "data" / "external" / "gymnasieskola_costs_per_child.csv")
+    return clean_costs_per_child(grund_raw), clean_costs_per_child(gymn_raw)
 
 
 def main() -> None:
@@ -164,24 +122,24 @@ def main() -> None:
     grund, gymn = load_costs_external()
 
     left, right = st.columns(2)
-    fig_g = px.line(
-        grund,
-        x="Year",
-        y=[c for c in ["Fixed_cost_per_child_kr", "Current_cost_per_child_kr"] if c in grund.columns],
-        markers=True,
-        title="Grundskola cost per child (fixed vs current)",
-    )
     with left:
+        fig_g = px.line(
+            grund,
+            x="Year",
+            y=[c for c in ["Fixed_cost_per_child_kr", "Current_cost_per_child_kr"] if c in grund.columns],
+            markers=True,
+            title="Grundskola cost per child (fixed vs current)",
+        )
         _plot(fig_g)
 
-    fig_y = px.line(
-        gymn,
-        x="Year",
-        y=[c for c in ["Fixed_cost_per_child_kr", "Current_cost_per_child_kr"] if c in gymn.columns],
-        markers=True,
-        title="Gymnasieskola cost per child (fixed vs current)",
-    )
     with right:
+        fig_y = px.line(
+            gymn,
+            x="Year",
+            y=[c for c in ["Fixed_cost_per_child_kr", "Current_cost_per_child_kr"] if c in gymn.columns],
+            markers=True,
+            title="Gymnasieskola cost per child (fixed vs current)",
+        )
         _plot(fig_y)
 
     st.write(
