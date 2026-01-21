@@ -19,6 +19,8 @@ from eduforecast.io.readers import (
 from eduforecast.preprocessing.clean_births import clean_births
 from eduforecast.preprocessing.clean_mortality import clean_mortality
 from eduforecast.preprocessing.clean_population import clean_population
+from eduforecast.validation.checks import validate_births_canonical, validate_df, validate_mortality_canonical, validate_population_canonical
+from eduforecast.validation.schemas import MIGRATION_CANONICAL
 
 logger = logging.getLogger(__name__)
 
@@ -128,6 +130,24 @@ def run_etl(cfg: AppConfig) -> None:
     population_clean = clean_population(pop_all_raw)
     migration_clean = _clean_migration(migration_raw)
 
+    # --- Validate (new structure) ---
+    start_year = int(_get(cfg.modeling, "start_year", 1968))
+    validate_births_canonical(births_clean, start_year=start_year).raise_if_failed()
+    validate_mortality_canonical(mortality_clean).raise_if_failed()
+    validate_population_canonical(population_clean).raise_if_failed()
+
+    validate_df(
+        migration_clean,
+        schema=MIGRATION_CANONICAL,
+        region_code_col="Region_Code",
+        year_col="Year",
+        age_col="Age",
+        age_min=0,
+        age_max=120,
+        nonnegative_cols=("Number",),
+        unique_keys=("Region_Code", "Age", "Year"),
+    ).raise_if_failed()
+
     # Derived region map (consistent)
     region_map = (
         pd.concat(
@@ -162,10 +182,6 @@ def run_etl(cfg: AppConfig) -> None:
     ensure_index(db_path, "mortality_data_per_region", ["Region_Code", "Age", "Year"], unique=False)
     ensure_index(db_path, "population_0_19_per_region", ["Region_Code", "Age", "Year"], unique=False)
     ensure_index(db_path, "migration_data_per_region", ["Region_Code", "Age", "Year"], unique=False)
-
-    # --- Light sanity checks ---
-    assert births_clean["Region_Code"].astype(str).str.len().eq(2).all()
-    assert population_clean["Age"].between(0, 19).all()
 
     logger.info("ETL complete. SQLite written to: %s", db_path)
     logger.info("Processed CSVs written to: %s", processed_dir)
