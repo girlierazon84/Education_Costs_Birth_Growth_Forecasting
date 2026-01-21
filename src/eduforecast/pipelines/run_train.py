@@ -22,12 +22,7 @@ from eduforecast.modeling.ts_models import fit_ets
 logger = logging.getLogger(__name__)
 
 
-# ---------------- CV splitting ----------------
 def last_n_years_cv(years: np.ndarray, n_splits: int) -> list[tuple[np.ndarray, np.ndarray]]:
-    """
-    Walk-forward: use the last n_splits years as 1-step test points.
-    Each split trains on all years < test_year, tests on test_year.
-    """
     years_sorted = np.array(sorted(set(years.tolist())), dtype=int)
     if len(years_sorted) <= n_splits + 3:
         n_splits = max(1, len(years_sorted) - 3)
@@ -37,13 +32,11 @@ def last_n_years_cv(years: np.ndarray, n_splits: int) -> list[tuple[np.ndarray, 
     for ty in test_years:
         train_idx = np.where(years < ty)[0]
         test_idx = np.where(years == ty)[0]
-        if len(train_idx) == 0 or len(test_idx) == 0:
-            continue
-        splits.append((train_idx, test_idx))
+        if len(train_idx) and len(test_idx):
+            splits.append((train_idx, test_idx))
     return splits
 
 
-# ---------------- Helpers ----------------
 def _safe_int(x: Any, default: int) -> int:
     try:
         return int(x)
@@ -57,7 +50,6 @@ def _resolve(cfg: AppConfig, maybe_path: str | Path) -> Path:
 
 
 def _get(cfg_obj: Any, key: str, default: Any = None) -> Any:
-    """Support both dict-style and attribute-style config."""
     if cfg_obj is None:
         return default
     if hasattr(cfg_obj, key):
@@ -68,14 +60,12 @@ def _get(cfg_obj: Any, key: str, default: Any = None) -> Any:
     return default
 
 
-# ---------------- IO ----------------
 def _read_births_sqlite(db_path: Path) -> pd.DataFrame:
     with sqlite3.connect(db_path) as con:
         return pd.read_sql("SELECT * FROM birth_data_per_region", con)
 
 
 def run_train(cfg: AppConfig) -> None:
-    # Resolve db path (supports cfg.database.sqlite_path OR dict)
     sqlite_path = _get(cfg.database, "sqlite_path")
     if not sqlite_path:
         raise ValueError("Missing database.sqlite_path in config")
@@ -83,7 +73,7 @@ def run_train(cfg: AppConfig) -> None:
 
     births = _read_births_sqlite(db_path)
 
-    # Normalize schema defensively
+    births = births.copy()
     births["Region_Code"] = births["Region_Code"].astype("string").str.strip().str.zfill(2)
     births["Region_Name"] = births.get("Region_Name", births["Region_Code"]).astype(str).str.strip()
     births["Year"] = pd.to_numeric(births["Year"], errors="coerce").astype("Int64")
@@ -106,7 +96,6 @@ def run_train(cfg: AppConfig) -> None:
     cv_cfg = _get(cfg.modeling, "cv", {}) or {}
     n_splits = _safe_int(_get(cv_cfg, "n_splits", 5), 5)
 
-    # Output folders
     models_dir = _resolve(cfg, _get(cfg.paths, "models_dir")) / "births"
     metrics_dir = _resolve(cfg, _get(cfg.paths, "metrics_dir"))
     figures_dir = _resolve(cfg, _get(cfg.paths, "figures_dir")) / "models"
@@ -167,9 +156,13 @@ def run_train(cfg: AppConfig) -> None:
             y_pred = np.asarray(preds, dtype=float)
 
             mpack = compute_metrics(y_true, y_pred)
-            if not np.isfinite(mpack.rmse):
+            mdict = {k.upper(): v for k, v in mpack.as_dict().items()}
+
+            if not np.isfinite(mdict.get("RMSE", np.nan)):
                 logger.warning("No valid CV points for %s %s model=%s", rc, rn, model_name)
                 continue
+
+            valid_pairs = np.isfinite(y_true) & np.isfinite(y_pred)
 
             row = {
                 "Region_Code": rc,
@@ -177,13 +170,12 @@ def run_train(cfg: AppConfig) -> None:
                 "Model": model_name,
                 "Start_Year": int(years.min()),
                 "End_Year": int(years.max()),
-                "CV_Points": int(np.isfinite(y_true).sum()),
-                **mpack.as_dict(),
+                "CV_Points": int(valid_pairs.sum()),
+                **mdict,
             }
             all_rows.append(row)
             region_rows.append(row)
 
-            # store for plotting / residuals
             region_debug[model_name] = {
                 "split_years": split_years,
                 "y_true": y_true,
@@ -193,10 +185,10 @@ def run_train(cfg: AppConfig) -> None:
         if not region_rows:
             continue
 
-        sel = pick_best_model(region_rows, primary=metric_primary if metric_primary in {"rmse", "mae", "smape"} else "rmse")
+        primary = metric_primary if metric_primary in {"rmse", "mae", "smape"} else "rmse"
+        sel = pick_best_model(region_rows, primary=primary)
         best_name = sel.best_model
 
-        # Fit best on full history
         if best_name == "baseline_naive":
             best_model = fit_naive_last(y)
         elif best_name == "drift":
@@ -204,7 +196,6 @@ def run_train(cfg: AppConfig) -> None:
         else:
             best_model = fit_ets(y)
 
-        # Residuals for PI (use the CV residuals of best model)
         dbg = region_debug.get(best_name, {})
         y_true_cv = np.asarray(dbg.get("y_true", []), dtype=float)
         y_pred_cv = np.asarray(dbg.get("y_pred", []), dtype=float)
@@ -231,16 +222,15 @@ def run_train(cfg: AppConfig) -> None:
         rel_model_path = model_path.relative_to(cfg.project_root).as_posix()
         best_models[rc] = {"Region_Name": rn, "Best_Model": best_name, "Model_Path": rel_model_path}
 
-        # Diagnostic plot: actual + CV preds of best model
+        # Diagnostic plot
         try:
-            dbg = region_debug.get(best_name, {})
             split_years = dbg.get("split_years", [])
-            y_pred = np.asarray(dbg.get("y_pred", []), dtype=float)
+            y_pred_plot = np.asarray(dbg.get("y_pred", []), dtype=float)
 
             plt.figure()
-            plt.plot(years, y)  # actual
-            if len(split_years) == len(y_pred) and len(split_years) > 0:
-                plt.scatter(split_years, y_pred)  # CV preds
+            plt.plot(years, y)
+            if len(split_years) == len(y_pred_plot) and len(split_years) > 0:
+                plt.scatter(split_years, y_pred_plot)
             plt.title(f"Births: {rc} {rn} | Best: {best_name}")
             plt.xlabel("Year")
             plt.ylabel("Births (Number)")
@@ -250,7 +240,12 @@ def run_train(cfg: AppConfig) -> None:
         except Exception:
             logger.exception("Failed plotting for region %s", rc)
 
-    metrics_df = pd.DataFrame(all_rows).sort_values(["Region_Code", "RMSE"]).reset_index(drop=True)
+    metrics_df = pd.DataFrame(all_rows)
+    if not metrics_df.empty and "RMSE" in metrics_df.columns:
+        metrics_df = metrics_df.sort_values(["Region_Code", "RMSE"]).reset_index(drop=True)
+    else:
+        metrics_df = metrics_df.sort_values(["Region_Code"]).reset_index(drop=True)
+
     metrics_path = metrics_dir / "model_comparison_births.csv"
     metrics_df.to_csv(metrics_path, index=False)
 
