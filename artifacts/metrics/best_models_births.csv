@@ -1,0 +1,22 @@
+Region_Code,Region_Name,Best_Model,Model_Path
+01,Stockholms län,baseline_naive,artifacts/models/births/births_01_baseline_naive.joblib
+03,Uppsala län,baseline_naive,artifacts/models/births/births_03_baseline_naive.joblib
+04,Södermanlands län,exp_smoothing,artifacts/models/births/births_04_exp_smoothing.joblib
+05,Östergötlands län,exp_smoothing,artifacts/models/births/births_05_exp_smoothing.joblib
+06,Jönköpings län,exp_smoothing,artifacts/models/births/births_06_exp_smoothing.joblib
+07,Kronobergs län,exp_smoothing,artifacts/models/births/births_07_exp_smoothing.joblib
+08,Kalmar län,baseline_naive,artifacts/models/births/births_08_baseline_naive.joblib
+09,Gotlands län,exp_smoothing,artifacts/models/births/births_09_exp_smoothing.joblib
+10,Blekinge län,exp_smoothing,artifacts/models/births/births_10_exp_smoothing.joblib
+12,Skåne län,exp_smoothing,artifacts/models/births/births_12_exp_smoothing.joblib
+13,Hallands län,exp_smoothing,artifacts/models/births/births_13_exp_smoothing.joblib
+14,Västra Götalands län,exp_smoothing,artifacts/models/births/births_14_exp_smoothing.joblib
+17,Värmlands län,exp_smoothing,artifacts/models/births/births_17_exp_smoothing.joblib
+18,Örebro län,baseline_naive,artifacts/models/births/births_18_baseline_naive.joblib
+19,Västmanlands län,exp_smoothing,artifacts/models/births/births_19_exp_smoothing.joblib
+20,Dalarnas län,exp_smoothing,artifacts/models/births/births_20_exp_smoothing.joblib
+21,Gävleborgs län,exp_smoothing,artifacts/models/births/births_21_exp_smoothing.joblib
+22,Västernorrlands län,baseline_naive,artifacts/models/births/births_22_baseline_naive.joblib
+23,Jämtlands län,exp_smoothing,artifacts/models/births/births_23_exp_smoothing.joblib
+24,Västerbottens län,exp_smoothing,artifacts/models/births/births_24_exp_smoothing.joblib
+25,Norrbottens län,baseline_naive,artifacts/models/births/births_25_baseline_naive.joblib
