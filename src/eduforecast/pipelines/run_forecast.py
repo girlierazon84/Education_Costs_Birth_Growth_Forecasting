@@ -15,6 +15,8 @@ from eduforecast.costs import compute_education_costs, load_cost_tables
 from eduforecast.forecasting.predict_births import predict_births_all_regions
 from eduforecast.forecasting.predict_population import predict_population_0_19
 from eduforecast.io.writers import write_forecast_artifact
+from eduforecast.validation.checks import validate_df
+from eduforecast.validation.schemas import BIRTHS_FORECAST, EDU_COSTS_FORECAST, POP_0_19_FORECAST
 
 logger = logging.getLogger(__name__)
 
@@ -84,20 +86,17 @@ def _maybe_plot_births(
 
 
 def run_forecast(cfg: AppConfig) -> None:
-    # --- DB path ---
     sqlite_path = _get(cfg.database, "sqlite_path")
     if not sqlite_path:
         raise ValueError("Missing database.sqlite_path in config")
     db_path = _resolve(cfg, sqlite_path)
 
-    # --- Forecast horizon ---
     forecast_cfg = cfg.forecast
     start_year = _safe_int(_get(forecast_cfg, "start_year", 2024), 2024)
     end_year = _safe_int(_get(forecast_cfg, "end_year", 2030), 2030)
     if end_year < start_year:
         raise ValueError("forecast.end_year must be >= forecast.start_year")
 
-    # --- Output dirs ---
     paths_cfg = cfg.paths
     metrics_dir = _resolve(cfg, _get(paths_cfg, "metrics_dir"))
     forecasts_dir = _resolve(cfg, _get(paths_cfg, "forecasts_dir"))
@@ -107,7 +106,6 @@ def run_forecast(cfg: AppConfig) -> None:
     forecasts_dir.mkdir(parents=True, exist_ok=True)
     figures_dir.mkdir(parents=True, exist_ok=True)
 
-    # --- Best models registry ---
     best_models_path = metrics_dir / "best_models_births.csv"
     if not best_models_path.exists():
         raise FileNotFoundError(f"Missing {best_models_path}. Run `eduforecast train` first.")
@@ -123,7 +121,6 @@ def run_forecast(cfg: AppConfig) -> None:
 
     interval_level = float(_get(forecast_cfg, "interval_level", 0.95))
 
-    # --- Birth forecasting ---
     births_forecast = predict_births_all_regions(
         best_models_df=best,
         project_root=cfg.project_root,
@@ -141,15 +138,25 @@ def run_forecast(cfg: AppConfig) -> None:
     births_forecast["Year"] = births_forecast["Year"].astype(int)
     births_forecast = births_forecast.sort_values(["Region_Code", "Year"]).reset_index(drop=True)
 
+    # Validate births forecast artifact
+    validate_df(
+        births_forecast,
+        schema=BIRTHS_FORECAST,
+        region_code_col="Region_Code",
+        year_col="Year",
+        year_min=start_year,
+        year_max=end_year,
+        nonnegative_cols=("Forecast_Births",),
+        unique_keys=("Region_Code", "Year"),
+    ).raise_if_failed()
+
     births_out_path = forecasts_dir / f"birth_forecast_{start_year}_{end_year}.csv"
     write_forecast_artifact(births_forecast, births_out_path)
     logger.info("Saved births forecast: %s", births_out_path)
 
-    # --- Summary ---
+    # Summary
     if births_forecast.empty:
-        summary_df = pd.DataFrame(
-            columns=["Region_Code", "Region_Name", "Model", "Forecast_Min", "Forecast_Max", "Forecast_Mean"]
-        )
+        summary_df = pd.DataFrame(columns=["Region_Code", "Region_Name", "Model", "Forecast_Min", "Forecast_Max", "Forecast_Mean"])
     else:
         summary_df = (
             births_forecast.groupby(["Region_Code", "Region_Name", "Model"], as_index=False)["Forecast_Births"]
@@ -172,7 +179,6 @@ def run_forecast(cfg: AppConfig) -> None:
         region_codes=["01", "12", "14"],
     )
 
-    # --- Population 0–19 ---
     pop_forecast = predict_population_0_19(
         births_forecast=births_forecast,
         db_path=db_path,
@@ -191,11 +197,26 @@ def run_forecast(cfg: AppConfig) -> None:
     pop_forecast["Year"] = pop_forecast["Year"].astype(int)
     pop_forecast = pop_forecast.sort_values(["Region_Code", "Year", "Age"]).reset_index(drop=True)
 
+    # Validate population forecast artifact
+    validate_df(
+        pop_forecast,
+        schema=POP_0_19_FORECAST,
+        region_code_col="Region_Code",
+        year_col="Year",
+        year_min=start_year,
+        year_max=end_year,
+        age_col="Age",
+        age_min=0,
+        age_max=19,
+        nonnegative_cols=("Forecast_Population",),
+        unique_keys=("Region_Code", "Year", "Age"),
+    ).raise_if_failed()
+
     pop_out_path = forecasts_dir / f"population_0_19_forecast_{start_year}_{end_year}.csv"
     write_forecast_artifact(pop_forecast, pop_out_path)
     logger.info("Saved population forecast: %s", pop_out_path)
 
-    # --- Costs ---
+    # Costs
     costs_cfg = getattr(cfg, "costs", None)
     if costs_cfg is None:
         costs_cfg = _get(cfg.raw, "costs", {})  # fallback
@@ -227,6 +248,18 @@ def run_forecast(cfg: AppConfig) -> None:
     if "Region_Name" in costs_df.columns:
         costs_df["Region_Name"] = costs_df["Region_Name"].astype(str).str.strip()
     costs_df["School_Type"] = costs_df["School_Type"].astype(str).str.strip().str.lower()
+
+    # Validate costs artifact
+    validate_df(
+        costs_df,
+        schema=EDU_COSTS_FORECAST,
+        region_code_col="Region_Code",
+        year_col="Year",
+        year_min=start_year,
+        year_max=end_year,
+        nonnegative_cols=("Forecast_Students", "Fixed_Total_Cost_kr", "Current_Total_Cost_kr"),
+        unique_keys=("Region_Code", "Year", "School_Type"),
+    ).raise_if_failed()
 
     costs_out_path = forecasts_dir / f"education_costs_forecast_{start_year}_{end_year}.csv"
     write_forecast_artifact(costs_df, costs_out_path)
