@@ -11,8 +11,7 @@ import numpy as np
 import pandas as pd
 
 from eduforecast.common.config import AppConfig
-from eduforecast.costs.cost_per_child import load_cost_tables  # UPDATED
-from eduforecast.costs.total_costs import compute_education_costs
+from eduforecast.costs import compute_education_costs, load_cost_tables
 from eduforecast.forecasting.predict_births import predict_births_all_regions
 from eduforecast.forecasting.predict_population import predict_population_0_19
 from eduforecast.io.writers import write_forecast_artifact
@@ -148,7 +147,9 @@ def run_forecast(cfg: AppConfig) -> None:
 
     # --- Summary ---
     if births_forecast.empty:
-        summary_df = pd.DataFrame(columns=["Region_Code", "Region_Name", "Model", "Forecast_Min", "Forecast_Max", "Forecast_Mean"])
+        summary_df = pd.DataFrame(
+            columns=["Region_Code", "Region_Name", "Model", "Forecast_Min", "Forecast_Max", "Forecast_Mean"]
+        )
     else:
         summary_df = (
             births_forecast.groupby(["Region_Code", "Region_Name", "Model"], as_index=False)["Forecast_Births"]
