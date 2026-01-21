@@ -61,7 +61,6 @@ def main() -> None:
 
     births = load_births()
 
-    # Validation status (new structure)
     with st.expander("Data validation status", expanded=False):
         try:
             validate_births_canonical(births, start_year=1968).raise_if_failed()
@@ -98,13 +97,11 @@ def main() -> None:
     c3.metric("Min year", f"{bdf['Year'].min()}")
     c4.metric("Max year", f"{bdf['Year'].max()}")
 
-    fig = px.line(series, x="Year", y="Number", markers=True, title=title)
-    _plot(fig)
+    _plot(px.line(series, x="Year", y="Number", markers=True, title=title))
 
     yoy = series.sort_values("Year").copy()
     yoy["YoY_change_pct"] = yoy["Number"].pct_change() * 100.0
-    fig_yoy = px.histogram(yoy.dropna(), x="YoY_change_pct", nbins=40, title="YoY % change distribution")
-    _plot(fig_yoy)
+    _plot(px.histogram(yoy.dropna(), x="YoY_change_pct", nbins=40, title="YoY % change distribution"))
 
     st.subheader("Missing years report")
     if reg_sel != "(National total)":
@@ -127,8 +124,8 @@ def main() -> None:
     )
 
     st.divider()
-
     st.subheader("Cost tables (external)")
+
     grund, gymn = load_costs_external()
 
     with st.expander("Cost table validation status", expanded=False):
@@ -141,24 +138,25 @@ def main() -> None:
 
     left, right = st.columns(2)
     with left:
-        fig_g = px.line(
-            grund,
-            x="Year",
-            y=[c for c in ["Fixed_cost_per_child_kr", "Current_cost_per_child_kr"] if c in grund.columns],
-            markers=True,
-            title="Grundskola cost per child (fixed vs current)",
+        _plot(
+            px.line(
+                grund,
+                x="Year",
+                y=[c for c in ["Fixed_cost_per_child_kr", "Current_cost_per_child_kr"] if c in grund.columns],
+                markers=True,
+                title="Grundskola cost per child (fixed vs current)",
+            )
         )
-        _plot(fig_g)
-
     with right:
-        fig_y = px.line(
-            gymn,
-            x="Year",
-            y=[c for c in ["Fixed_cost_per_child_kr", "Current_cost_per_child_kr"] if c in gymn.columns],
-            markers=True,
-            title="Gymnasieskola cost per child (fixed vs current)",
+        _plot(
+            px.line(
+                gymn,
+                x="Year",
+                y=[c for c in ["Fixed_cost_per_child_kr", "Current_cost_per_child_kr"] if c in gymn.columns],
+                markers=True,
+                title="Gymnasieskola cost per child (fixed vs current)",
+            )
         )
-        _plot(fig_y)
 
     st.write(
         f"Grundskola years: {grund['Year'].min()}–{grund['Year'].max()} • "
