@@ -15,20 +15,31 @@ import pandas as pd
 from eduforecast.forecasting.intervals import IntervalResult, empirical_pi, normal_pi
 from eduforecast.forecasting.ets_models import ETSNoSeason  # legacy compat shim only
 
-
 logger = logging.getLogger(__name__)
 
 
 def _install_pickle_compat_shims() -> None:
     """
     Allow loading legacy joblib artifacts saved when classes were recorded as __main__.ClassName.
-    We only shim the legacy names that appear in old pickles.
+
+    We only shim names that may appear in older pickles. This is safe even if the pickle
+    doesn't reference them.
     """
     main_mod = sys.modules.get("__main__")
     if main_mod is None:
         return
-    # Old pickle referenced __main__.ETSNoSeason
+
+    # Old notebook artifacts referenced __main__.ETSNoSeason
     setattr(main_mod, "ETSNoSeason", ETSNoSeason)
+
+    # Optional future-proofing: if any older artifacts referenced these names,
+    # you can add them later without touching the rest of the pipeline.
+    # Example:
+    # from eduforecast.modeling.baselines import NaiveLastModel, DriftModel
+    # from eduforecast.modeling.ts_models import ETSModel
+    # setattr(main_mod, "NaiveLastModel", NaiveLastModel)
+    # setattr(main_mod, "DriftModel", DriftModel)
+    # setattr(main_mod, "ETSModel", ETSModel)
 
 
 @dataclass(frozen=True)
@@ -66,11 +77,15 @@ def _safe_str(x: Any, default: str = "") -> str:
 def _predict_steps(model: Any, steps: int) -> np.ndarray:
     """
     Support common forecast interfaces:
-      - wrapper models: model.predict(steps=steps) or model.predict(steps)
-      - statsmodels results: model.forecast(steps)
+        - wrapper models: model.predict(steps=steps) or model.predict(steps)
+        - statsmodels results: model.forecast(steps)
+        - wrapper models holding fitted result: model.fitted.forecast(steps)
     """
     steps = int(steps)
+    if steps < 0:
+        raise ValueError("steps must be >= 0")
 
+    # Wrapper models (your protocol)
     if hasattr(model, "predict"):
         try:
             yhat = model.predict(steps=steps)
@@ -80,8 +95,15 @@ def _predict_steps(model: Any, steps: int) -> np.ndarray:
             yhat = model.predict(steps)
             return np.squeeze(np.asarray(yhat, dtype=float))
 
+    # statsmodels fitted result directly
     if hasattr(model, "forecast"):
         yhat = model.forecast(steps)
+        return np.squeeze(np.asarray(yhat, dtype=float))
+
+    # wrapper around statsmodels fitted result (ETSModel.fitted)
+    fitted = getattr(model, "fitted", None)
+    if fitted is not None and hasattr(fitted, "forecast"):
+        yhat = fitted.forecast(steps)
         return np.squeeze(np.asarray(yhat, dtype=float))
 
     raise TypeError("Loaded model object does not support predict/forecast steps interface.")
@@ -125,6 +147,9 @@ def predict_births_for_region(
         payload = joblib.load(model_path)
     except Exception as e:
         raise RuntimeError(f"Failed to load model for {rc} ({rn}) at {model_path}: {e}") from e
+
+    if "model" not in payload:
+        raise KeyError(f"Model payload missing required key 'model': {model_path}")
 
     model = payload["model"]
     model_name = _safe_str(payload.get("model_name", payload.get("best_model", "unknown")))
@@ -202,4 +227,8 @@ def predict_births_all_regions(
     if not out_frames:
         return pd.DataFrame(columns=["Region_Code", "Region_Name", "Year", "Model", "Forecast_Births"])
 
-    return pd.concat(out_frames, ignore_index=True).sort_values(["Region_Code", "Year"]).reset_index(drop=True)
+    return (
+        pd.concat(out_frames, ignore_index=True)
+        .sort_values(["Region_Code", "Year"])
+        .reset_index(drop=True)
+    )
