@@ -84,8 +84,10 @@ def clean_births(
         .str.replace(r"\.0$", "", regex=True)
         .str.zfill(2)
     )
+
     d["Year"] = pd.to_numeric(d["Year"], errors="coerce").astype("Int64")
     d["Number"] = pd.to_numeric(d["Number"], errors="coerce").astype(float)
+
     d = d.dropna(subset=["Year", "Number"]).copy()
     d["Year"] = d["Year"].astype(int)
 
@@ -93,11 +95,15 @@ def clean_births(
         d["Region_Name"] = pd.NA
     d["Region_Name"] = d["Region_Name"].astype("string").str.strip()
 
-    m = dict(region_code_to_name or DEFAULT_REGION_CODE_TO_NAME)
+    mapping = dict(region_code_to_name or DEFAULT_REGION_CODE_TO_NAME)
     d["Region_Name"] = d["Region_Name"].mask(
         d["Region_Name"].isna() | (d["Region_Name"] == "") | (d["Region_Name"] == d["Region_Code"]),
-        d["Region_Code"].map(m),
+        d["Region_Code"].map(mapping),
     )
-    d["Region_Name"] = d["Region_Name"].fillna(d["Region_Code"]).astype(str)
+    d["Region_Name"] = d["Region_Name"].fillna(d["Region_Code"]).astype(str).str.strip()
 
-    return d[["Region_Code", "Region_Name", "Year", "Number"]].sort_values(["Region_Code", "Year"]).reset_index(drop=True)
+    return (
+        d[["Region_Code", "Region_Name", "Year", "Number"]]
+        .sort_values(["Region_Code", "Year"])
+        .reset_index(drop=True)
+    )
