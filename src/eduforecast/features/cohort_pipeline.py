@@ -11,22 +11,10 @@ from eduforecast.io.db import read_table
 
 
 def _read_population_0_19(db_path: Path) -> pd.DataFrame:
-    """Read the already-combined population 0–19 table."""
     return read_table(db_path, "population_0_19_per_region")
 
 
-def build_survival_profile(
-    pop_hist: pd.DataFrame,
-    deaths_hist: pd.DataFrame,
-    last_n_years: int = 5,
-) -> pd.DataFrame:
-    """
-    Build survival rates per Region_Code, Age using last N historical years:
-        survival(age) ≈ 1 - deaths(age)/population(age)
-
-    Returns:
-        Region_Code, Region_Name, Age, survival_rate
-    """
+def build_survival_profile(pop_hist: pd.DataFrame, deaths_hist: pd.DataFrame, last_n_years: int = 5) -> pd.DataFrame:
     pop = pop_hist.copy()
     dea = deaths_hist.copy()
 
@@ -45,7 +33,7 @@ def build_survival_profile(
     dea["Age"] = dea["Age"].astype(int)
 
     max_year = int(pop["Year"].max())
-    use_years = list(range(max_year - last_n_years + 1, max_year + 1))
+    use_years = list(range(max_year - int(last_n_years) + 1, max_year + 1))
 
     pop_n = pop[pop["Year"].isin(use_years)].copy()
     dea_n = dea[dea["Year"].isin(use_years)].copy()
@@ -70,10 +58,7 @@ def build_survival_profile(
         .rename(columns={"survival": "survival_rate"})
     )
 
-    # Fill missing survival by Age mean (national), then fallback to 1.0
-    surv["survival_rate"] = surv["survival_rate"].fillna(
-        surv.groupby("Age")["survival_rate"].transform("mean")
-    )
+    surv["survival_rate"] = surv["survival_rate"].fillna(surv.groupby("Age")["survival_rate"].transform("mean"))
     surv["survival_rate"] = surv["survival_rate"].fillna(1.0)
     return surv
 
@@ -84,13 +69,6 @@ def build_migration_profile(
     end_year: int,
     last_n_years: int = 5,
 ) -> pd.DataFrame:
-    """
-    Hold net migration constant using mean of last N years per region-age,
-    then expand to all forecast years.
-
-    Returns:
-        Region_Code, Region_Name, Age, Year, net_migration_per_year
-    """
     mig = migration_hist.copy()
     mig["Region_Code"] = mig["Region_Code"].astype("string").str.strip().str.zfill(2)
     mig["Region_Name"] = mig.get("Region_Name", mig["Region_Code"]).astype(str).str.strip()
@@ -103,7 +81,7 @@ def build_migration_profile(
     mig["Age"] = mig["Age"].astype(int)
 
     max_year = int(mig["Year"].max())
-    use_years = list(range(max_year - last_n_years + 1, max_year + 1))
+    use_years = list(range(max_year - int(last_n_years) + 1, max_year + 1))
     mig_n = mig[mig["Year"].isin(use_years)].copy()
 
     prof = (
@@ -113,8 +91,7 @@ def build_migration_profile(
     )
 
     years = pd.DataFrame({"Year": list(range(int(start_year), int(end_year) + 1))})
-    prof = prof.merge(years, how="cross")
-    return prof
+    return prof.merge(years, how="cross")
 
 
 def forecast_population_0_19(
@@ -123,20 +100,9 @@ def forecast_population_0_19(
     start_year: int,
     end_year: int,
 ) -> pd.DataFrame:
-    """
-    births_forecast columns:
-        Region_Code, Year, Forecast_Births (+ optional Region_Name)
-
-    Returns:
-        Region_Code, Region_Name, Age, Year, Forecast_Population
-    """
     pop_hist = _read_population_0_19(db_path)
     deaths_hist = read_table(db_path, "mortality_data_per_region")
     mig_hist = read_table(db_path, "migration_data_per_region")
-
-    pop_hist = pop_hist[pop_hist["Age"].between(0, 19)].copy()
-    deaths_hist = deaths_hist[deaths_hist["Age"].between(0, 19)].copy()
-    mig_hist = mig_hist[mig_hist["Age"].between(0, 19)].copy()
 
     births = births_forecast.copy()
     births["Region_Code"] = births["Region_Code"].astype("string").str.strip().str.zfill(2)
@@ -145,7 +111,6 @@ def forecast_population_0_19(
     births = births.dropna(subset=["Year"]).copy()
     births["Year"] = births["Year"].astype(int)
 
-    # Seed from latest historical year
     seed_year = int(pd.to_numeric(pop_hist["Year"], errors="coerce").max())
     seed = pop_hist[pop_hist["Year"] == seed_year].copy()
     seed["Region_Code"] = seed["Region_Code"].astype("string").str.strip().str.zfill(2)
@@ -165,7 +130,8 @@ def forecast_population_0_19(
     current = seed.copy()
 
     for year in range(int(start_year), int(end_year) + 1):
-        next_rows = []
+        next_rows: list[tuple[str, str, int, int, float]] = []
+
         for (rc, rn), g in current.groupby(["Region_Code", "Region_Name"]):
             b0 = float(births_map.get((rc, year), 0.0))
             mig0 = float(mig_map.get((rc, 0, year), 0.0))
@@ -185,5 +151,5 @@ def forecast_population_0_19(
         out_all.append(year_df)
         current = year_df
 
-    out = pd.concat(out_all, ignore_index=True).sort_values(["Region_Code", "Year", "Age"])
-    return out.reset_index(drop=True)
+    out = pd.concat(out_all, ignore_index=True).sort_values(["Region_Code", "Year", "Age"]).reset_index(drop=True)
+    return out
