@@ -5,9 +5,7 @@ Cost-per-child utilities.
 
 Purpose:
 - Load and standardize cost-per-child tables (grundskola / gymnasieskola).
-- Provide a clean place to implement cost extrapolation logic later (carry-forward, growth-rate, CPI, etc).
-
-This module is intentionally minimal for now.
+- Provide cost extrapolation logic (carry-forward, growth-rate) in one place.
 """
 
 from __future__ import annotations
@@ -20,7 +18,6 @@ import pandas as pd
 
 from eduforecast.io.readers import read_costs_per_child_raw
 from eduforecast.preprocessing.clean_costs import clean_costs_per_child
-
 
 CostBasis = Literal["fixed", "current"]
 ExtrapolationMethod = Literal["carry_forward", "growth_rate"]
@@ -70,7 +67,8 @@ def cost_schedule_for_years(
 
     Input:
         costs: standardized or raw; will be cleaned.
-    Output:
+
+    Output schema:
         Year, Fixed_cost_per_child_kr, Current_cost_per_child_kr, Cost_Year
 
     Logic:
@@ -86,51 +84,46 @@ def cost_schedule_for_years(
     if d.empty:
         raise ValueError("Cost table is empty after cleaning.")
 
+    # Ensure expected columns exist (clean_costs_per_child may keep only what exists)
+    for col in ["Fixed_cost_per_child_kr", "Current_cost_per_child_kr"]:
+        if col not in d.columns:
+            d[col] = pd.NA
+
     years = pd.DataFrame({"Year": list(range(start_year, end_year + 1))})
 
-    # As-of backward join: Year gets last known costs <= Year
-    base = pd.merge_asof(years, d, on="Year", direction="backward")
+    # Use merge_asof to pick the latest cost row with Year <= target Year
+    sched = pd.merge_asof(years, d, on="Year", direction="backward")
 
-    # If forecast starts before first cost year, forward-fill from earliest cost
-    if base["Fixed_cost_per_child_kr"].isna().any() or base["Current_cost_per_child_kr"].isna().any():
-        base = pd.merge_asof(years, d, on="Year", direction="forward")
+    # If start_year is earlier than first known cost year, forward-fill from earliest
+    if sched["Fixed_cost_per_child_kr"].isna().all() and sched["Current_cost_per_child_kr"].isna().all():
+        sched = pd.merge_asof(years, d, on="Year", direction="forward")
+        sched["Cost_Year"] = int(d["Year"].min())
+    else:
+        # Determine which cost year was used by recomputing Cost_Year with the same asof join
+        d_cost = d[["Year"]].rename(columns={"Year": "Cost_Year"})
+        cost_year = pd.merge_asof(years, d_cost, left_on="Year", right_on="Cost_Year", direction="backward")
 
-    # Determine which historical cost-year was used for each Year
-    d2 = d.rename(columns={"Year": "Cost_Year"})
-    base = pd.merge_asof(
-        years,
-        d2,
-        left_on="Year",
-        right_on="Cost_Year",
-        direction="backward",
-    )
-    if base["Fixed_cost_per_child_kr"].isna().any() or base["Current_cost_per_child_kr"].isna().any():
-        base = pd.merge_asof(
-            years,
-            d2,
-            left_on="Year",
-            right_on="Cost_Year",
-            direction="forward",
-        )
+        # forward fill Cost_Year if needed (when target year < min cost year)
+        if cost_year["Cost_Year"].isna().any():
+            cost_year = pd.merge_asof(years, d_cost, left_on="Year", right_on="Cost_Year", direction="forward")
 
-    # Apply growth rate relative to the referenced Cost_Year
+        sched["Cost_Year"] = pd.to_numeric(cost_year["Cost_Year"], errors="coerce")
+
+    method = str(method).strip().lower()
     if method == "growth_rate":
-        yrs = (base["Year"] - base["Cost_Year"]).clip(lower=0).astype(int)
+        yrs = (pd.to_numeric(sched["Year"], errors="coerce") - pd.to_numeric(sched["Cost_Year"], errors="coerce")).clip(lower=0)
+        yrs = yrs.fillna(0).astype(int)
         growth = (1.0 + float(annual_growth_rate)) ** yrs
+
         for col in ["Fixed_cost_per_child_kr", "Current_cost_per_child_kr"]:
-            if col in base.columns:
-                base[col] = pd.to_numeric(base[col], errors="coerce") * growth
+            sched[col] = pd.to_numeric(sched[col], errors="coerce") * growth
 
     elif method != "carry_forward":
         raise ValueError(f"Unknown method: {method}")
 
-    # Ensure stable columns
+    # Stable types
+    sched["Year"] = pd.to_numeric(sched["Year"], errors="coerce").astype("Int64").astype(int)
+    sched["Cost_Year"] = pd.to_numeric(sched["Cost_Year"], errors="coerce").astype("Int64").astype(int)
+
     cols = ["Year", "Fixed_cost_per_child_kr", "Current_cost_per_child_kr", "Cost_Year"]
-    for c in cols:
-        if c not in base.columns:
-            base[c] = pd.NA
-
-    base["Year"] = pd.to_numeric(base["Year"], errors="coerce").astype("Int64").astype(int)
-    base["Cost_Year"] = pd.to_numeric(base["Cost_Year"], errors="coerce").astype("Int64").astype(int)
-
-    return base[cols].sort_values("Year").reset_index(drop=True)
+    return sched[cols].sort_values("Year").reset_index(drop=True)
