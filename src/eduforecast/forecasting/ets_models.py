@@ -3,20 +3,44 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
+from typing import Any
+
 import numpy as np
+
+
+@dataclass
+class NaiveLastModel:
+    """
+    Naive baseline: repeats last observed value.
+
+    Pickle-safe because it lives in eduforecast.forecasting.ets_models
+    (not __main__).
+    """
+    last_value: float
+
+    def predict(self, steps: int) -> np.ndarray:
+        return np.full(shape=(int(steps),), fill_value=float(self.last_value), dtype=float)
+
+
+@dataclass
+class ETSModel:
+    """
+    Wrapper around a statsmodels Holt-Winters fitted result.
+    """
+    fitted: Any  # statsmodels result object
+
+    def predict(self, steps: int) -> np.ndarray:
+        # statsmodels HW results typically support .forecast(steps)
+        return np.asarray(self.fitted.forecast(int(steps)), dtype=float)
 
 
 @dataclass
 class ETSNoSeason:
     """
-    Simple fallback ETS-like wrapper that can be pickled safely because it lives in a module.
+    Compatibility shim for legacy joblib artifacts that were saved with
+    __main__.ETSNoSeason.
 
-    It mimics a "statsmodels-ish" interface:
-        model.predict(steps=horizon)
-
-    NOTE:
-    - This is only meant to support legacy saved artifacts that referenced ETSNoSeason.
-    - Prefer saving real statsmodels objects going forward.
+    It returns a constant forecast (level-only).
     """
     level_: float
 
