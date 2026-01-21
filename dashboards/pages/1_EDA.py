@@ -2,16 +2,18 @@
 
 from __future__ import annotations
 
-from pathlib import Path
 import io
+from pathlib import Path
 
 import pandas as pd
-import streamlit as st
 import plotly.express as px
+import streamlit as st
 
 from eduforecast.io.readers import read_births_raw, read_costs_per_child_raw
 from eduforecast.preprocessing.clean_births import clean_births
 from eduforecast.preprocessing.clean_costs import clean_costs_per_child
+from eduforecast.validation.checks import validate_births_canonical, validate_df
+from eduforecast.validation.schemas import COSTS_PER_CHILD_CANONICAL
 
 
 def project_root() -> Path:
@@ -58,6 +60,14 @@ def main() -> None:
     st.caption("Sanity-check births trends + cost table coverage.")
 
     births = load_births()
+
+    # Validation status (new structure)
+    with st.expander("Data validation status", expanded=False):
+        try:
+            validate_births_canonical(births, start_year=1968).raise_if_failed()
+            st.success("Births: ✅ passed canonical validation")
+        except Exception as e:
+            st.error(f"Births: ❌ validation failed\n\n{e}")
 
     with st.sidebar:
         st.header("EDA Filters")
@@ -120,6 +130,14 @@ def main() -> None:
 
     st.subheader("Cost tables (external)")
     grund, gymn = load_costs_external()
+
+    with st.expander("Cost table validation status", expanded=False):
+        try:
+            validate_df(grund, schema=COSTS_PER_CHILD_CANONICAL, year_col="Year").raise_if_failed()
+            validate_df(gymn, schema=COSTS_PER_CHILD_CANONICAL, year_col="Year").raise_if_failed()
+            st.success("Costs: ✅ both tables passed canonical validation")
+        except Exception as e:
+            st.error(f"Costs: ❌ validation failed\n\n{e}")
 
     left, right = st.columns(2)
     with left:
