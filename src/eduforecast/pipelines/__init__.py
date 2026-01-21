@@ -1,5 +1,7 @@
 """src/eduforecast/pipelines/__init__.py"""
 
+from __future__ import annotations
+
 from .run_eda_births import run_eda_births
 from .run_etl import run_etl
 from .run_forecast import run_forecast
