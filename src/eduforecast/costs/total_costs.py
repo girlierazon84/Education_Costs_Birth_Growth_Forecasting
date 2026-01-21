@@ -2,11 +2,9 @@
 
 from __future__ import annotations
 
-from pathlib import Path
-
 import pandas as pd
 
-from eduforecast.costs.cost_per_child import CostTables, cost_schedule_for_years, load_cost_tables
+from eduforecast.costs.cost_per_child import cost_schedule_for_years
 
 
 def compute_education_costs(
@@ -19,7 +17,7 @@ def compute_education_costs(
 ) -> pd.DataFrame:
     """
     pop_forecast expected columns:
-        Region_Code, Region_Name, Age, Year, Forecast_Population
+        Region_Code, Region_Name (optional), Age, Year, Forecast_Population
 
     cost tables expected columns (raw or clean):
         Year, Fixed_cost_per_child_kr, Current_cost_per_child_kr
@@ -45,14 +43,18 @@ def compute_education_costs(
     df["Region_Name"] = df.get("Region_Name", df["Region_Code"]).astype(str).str.strip()
     df["Year"] = pd.to_numeric(df["Year"], errors="coerce").astype("Int64")
     df["Age"] = pd.to_numeric(df["Age"], errors="coerce").astype("Int64")
-    df["Forecast_Population"] = pd.to_numeric(df["Forecast_Population"], errors="coerce").astype(float)
+    df["Forecast_Population"] = pd.to_numeric(df["Forecast_Population"], errors="coerce")
+
     df = df.dropna(subset=["Year", "Age", "Forecast_Population"]).copy()
     df["Year"] = df["Year"].astype(int)
     df["Age"] = df["Age"].astype(int)
+    df["Forecast_Population"] = df["Forecast_Population"].astype(float)
 
     # derive horizon from pop forecast
     start_year = int(df["Year"].min())
     end_year = int(df["Year"].max())
+    if end_year < start_year:
+        raise ValueError("pop_forecast has invalid year range")
 
     grund_ages = set(range(7, 17))   # 7–16
     gymn_ages = set(range(17, 20))   # 17–19
@@ -77,18 +79,21 @@ def compute_education_costs(
     students["School_Type"] = students["School_Type"].astype(str).str.strip().str.lower()
 
     method = str(extrapolation).strip().lower()
+    if method not in {"carry_forward", "growth_rate"}:
+        method = "carry_forward"
+
     grund_sched = cost_schedule_for_years(
         grund,
         start_year=start_year,
         end_year=end_year,
-        method=method if method in {"carry_forward", "growth_rate"} else "carry_forward",
+        method=method,  # type: ignore[arg-type]
         annual_growth_rate=float(annual_growth_rate),
     )
     gymn_sched = cost_schedule_for_years(
         gymn,
         start_year=start_year,
         end_year=end_year,
-        method=method if method in {"carry_forward", "growth_rate"} else "carry_forward",
+        method=method,  # type: ignore[arg-type]
         annual_growth_rate=float(annual_growth_rate),
     )
 
@@ -96,7 +101,6 @@ def compute_education_costs(
 
     for school_type, sched in [("grundskola", grund_sched), ("gymnasieskola", gymn_sched)]:
         s = students[students["School_Type"] == school_type].copy()
-
         merged = s.merge(sched, on="Year", how="left")
 
         merged["Fixed_Total_Cost_kr"] = merged["Forecast_Students"] * pd.to_numeric(
