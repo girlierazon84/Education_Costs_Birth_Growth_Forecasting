@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import pandas as pd
+import pytest
 
 from eduforecast.costs.cost_per_child import cost_schedule_for_years
 from eduforecast.costs.total_costs import compute_education_costs
@@ -18,10 +19,17 @@ def test_cost_schedule_carry_forward() -> None:
     )
 
     sched = cost_schedule_for_years(costs, start_year=2024, end_year=2026, method="carry_forward")
+
     assert sched["Year"].tolist() == [2024, 2025, 2026]
+    assert set(["Fixed_cost_per_child_kr", "Current_cost_per_child_kr", "Cost_Year"]).issubset(sched.columns)
+
     # carry-forward should keep 2024 values for 2025/2026
     assert sched.loc[sched["Year"] == 2025, "Fixed_cost_per_child_kr"].iloc[0] == 110.0
     assert sched.loc[sched["Year"] == 2026, "Current_cost_per_child_kr"].iloc[0] == 220.0
+
+    # and the referenced cost-year should remain 2024
+    assert sched.loc[sched["Year"] == 2025, "Cost_Year"].iloc[0] == 2024
+    assert sched.loc[sched["Year"] == 2026, "Cost_Year"].iloc[0] == 2024
 
 
 def test_cost_schedule_growth_rate() -> None:
@@ -33,14 +41,29 @@ def test_cost_schedule_growth_rate() -> None:
         }
     )
 
-    sched = cost_schedule_for_years(costs, start_year=2024, end_year=2026, method="growth_rate", annual_growth_rate=0.1)
+    sched = cost_schedule_for_years(
+        costs,
+        start_year=2024,
+        end_year=2026,
+        method="growth_rate",
+        annual_growth_rate=0.1,
+    )
+
+    assert sched["Year"].tolist() == [2024, 2025, 2026]
+    assert set(["Fixed_cost_per_child_kr", "Current_cost_per_child_kr", "Cost_Year"]).issubset(sched.columns)
+
     # 2024 -> base
     assert sched.loc[sched["Year"] == 2024, "Fixed_cost_per_child_kr"].iloc[0] == 100.0
+
     # 2025 -> *1.1
-    assert sched.loc[sched["Year"] == 2025, "Fixed_cost_per_child_kr"].iloc[0] == 110.0
+    assert sched.loc[sched["Year"] == 2025, "Fixed_cost_per_child_kr"].iloc[0] == pytest.approx(110.0)
+
     # 2026 -> *1.1^2
-    v_2026 = sched.loc[sched["Year"] == 2026, "Fixed_cost_per_child_kr"].iloc[0]
-    assert abs(v_2026 - 121.0) < 1e-9
+    assert sched.loc[sched["Year"] == 2026, "Fixed_cost_per_child_kr"].iloc[0] == pytest.approx(121.0)
+
+    # referenced cost year should still be 2024
+    assert sched.loc[sched["Year"] == 2025, "Cost_Year"].iloc[0] == 2024
+    assert sched.loc[sched["Year"] == 2026, "Cost_Year"].iloc[0] == 2024
 
 
 def test_compute_education_costs_basic_math() -> None:
@@ -63,17 +86,19 @@ def test_compute_education_costs_basic_math() -> None:
     )
 
     out = compute_education_costs(pop_forecast=pop, grund=grund, gymn=gymn, extrapolation="carry_forward")
-    assert set(out["School_Type"].unique()) == {"grundskola", "gymnasieskola"}
 
-    grund_row = out[out["School_Type"] == "grundskola"].iloc[0]
-    gymn_row = out[out["School_Type"] == "gymnasieskola"].iloc[0]
+    assert set(out["School_Type"].unique()) == {"grundskola", "gymnasieskola"}
+    assert set(["Forecast_Students", "Fixed_Total_Cost_kr", "Current_Total_Cost_kr"]).issubset(out.columns)
+
+    grund_row = out[(out["Region_Code"] == "01") & (out["Year"] == 2024) & (out["School_Type"] == "grundskola")].iloc[0]
+    gymn_row = out[(out["Region_Code"] == "01") & (out["Year"] == 2024) & (out["School_Type"] == "gymnasieskola")].iloc[0]
 
     # grund students = 10 + 20 = 30
-    assert grund_row["Forecast_Students"] == 30
-    assert grund_row["Fixed_Total_Cost_kr"] == 30 * 100.0
-    assert grund_row["Current_Total_Cost_kr"] == 30 * 200.0
+    assert grund_row["Forecast_Students"] == pytest.approx(30.0)
+    assert grund_row["Fixed_Total_Cost_kr"] == pytest.approx(30.0 * 100.0)
+    assert grund_row["Current_Total_Cost_kr"] == pytest.approx(30.0 * 200.0)
 
     # gymn students = 5 + 5 = 10
-    assert gymn_row["Forecast_Students"] == 10
-    assert gymn_row["Fixed_Total_Cost_kr"] == 10 * 300.0
-    assert gymn_row["Current_Total_Cost_kr"] == 10 * 400.0
+    assert gymn_row["Forecast_Students"] == pytest.approx(10.0)
+    assert gymn_row["Fixed_Total_Cost_kr"] == pytest.approx(10.0 * 300.0)
+    assert gymn_row["Current_Total_Cost_kr"] == pytest.approx(10.0 * 400.0)
