@@ -20,16 +20,25 @@ class SelectionResult:
         return {"Best_Model": self.best_model, **self.best_row}
 
 
-def pick_best_model(rows: list[dict], *, primary: PrimaryMetric = "rmse") -> SelectionResult:
+def pick_best_model(rows: list[dict], *, primary: PrimaryMetric | str = "rmse") -> SelectionResult:
     """
     rows: list of dicts containing:
       - "Model"
       - "RMSE"/"MAE"/"SMAPE" columns (uppercase)
+
+    primary: "rmse"|"mae"|"smape" (preferred), but also tolerates "RMSE"/"MAE"/"SMAPE".
     """
     if not rows:
         raise ValueError("No model rows to select from.")
 
-    metric_key = {"rmse": "RMSE", "mae": "MAE", "smape": "SMAPE"}[primary]
+    p = str(primary).strip().lower()
+    # tolerate callers accidentally passing uppercase metric keys
+    if p in {"rmse", "mae", "smape"}:
+        metric_key = {"rmse": "RMSE", "mae": "MAE", "smape": "SMAPE"}[p]
+    elif p in {"rmse".upper(), "mae".upper(), "smape".upper()}:
+        metric_key = p.upper()
+    else:
+        metric_key = "RMSE"  # safe fallback
 
     best_row = None
     best_val = float("inf")
@@ -51,5 +60,5 @@ def pick_best_model(rows: list[dict], *, primary: PrimaryMetric = "rmse") -> Sel
     if best_row is None:
         raise ValueError("All metric values are NaN; cannot select a best model.")
 
-    best_model = str(best_row.get("Model", "unknown"))
+    best_model = str(best_row.get("Model", "unknown")).strip()
     return SelectionResult(best_model=best_model, best_row=dict(best_row))
