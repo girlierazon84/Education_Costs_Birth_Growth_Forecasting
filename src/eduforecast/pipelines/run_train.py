@@ -108,8 +108,10 @@ def run_train(cfg: AppConfig) -> None:
         births = births[births["Region_Code"].isin(include)].copy()
 
     candidates = _get(cfg.modeling, "candidates", ["baseline_naive", "drift", "exp_smoothing"])
-    metric_primary = str(_get(cfg.modeling, "metric_primary", "rmse")).lower()
-    metric_key = {"rmse": "RMSE", "mae": "MAE", "smape": "SMAPE"}.get(metric_primary, "RMSE")
+
+    metric_primary = str(_get(cfg.modeling, "metric_primary", "rmse")).strip().lower()
+    if metric_primary not in {"rmse", "mae", "smape"}:
+        metric_primary = "rmse"
 
     cv_cfg = _get(cfg.modeling, "cv", {}) or {}
     n_splits = _safe_int(_get(cv_cfg, "n_splits", 5), 5)
@@ -174,8 +176,7 @@ def run_train(cfg: AppConfig) -> None:
             y_pred = np.asarray(preds, dtype=float)
 
             mpack = compute_metrics(y_true, y_pred)
-            # Already stable keys: RMSE/MAE/SMAPE
-            mdict = mpack.as_dict()
+            mdict = mpack.as_dict()  # RMSE/MAE/SMAPE
 
             if not np.isfinite(mdict.get("RMSE", np.nan)):
                 logger.warning("No valid CV points for %s %s model=%s", rc, rn, model_name)
@@ -190,7 +191,7 @@ def run_train(cfg: AppConfig) -> None:
                 "Start_Year": int(years.min()),
                 "End_Year": int(years.max()),
                 "CV_Points": int(valid_pairs.sum()),
-                **{k.upper(): float(v) for k, v in mdict.items()},
+                **{k: float(v) for k, v in mdict.items()},
             }
             all_rows.append(row)
             region_rows.append(row)
@@ -204,8 +205,8 @@ def run_train(cfg: AppConfig) -> None:
         if not region_rows:
             continue
 
-        # Selection expects stable metric key names
-        sel = pick_best_model(region_rows, primary=metric_key)
+        # ✅ FIX: pass normalized primary metric name ("rmse"/"mae"/"smape")
+        sel = pick_best_model(region_rows, primary=metric_primary)
         best_name = str(sel.best_model).strip()
 
         if best_name == "baseline_naive":
