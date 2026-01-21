@@ -13,12 +13,16 @@ def clean_costs_per_child(df: pd.DataFrame) -> pd.DataFrame:
 
     Accepts common variants:
         Fixed_Cost_Per_Child_SEK, Current_Cost_Per_Child_SEK
+        År/Ar/year for Year
     """
     d = df.copy()
     d.columns = [c.strip() for c in d.columns]
 
     d = d.rename(
         columns={
+            "År": "Year",
+            "Ar": "Year",
+            "year": "Year",
             "Fixed_Cost_Per_Child_SEK": "Fixed_cost_per_child_kr",
             "Current_Cost_Per_Child_SEK": "Current_cost_per_child_kr",
             "fixed_cost_per_child_kr": "Fixed_cost_per_child_kr",
@@ -38,6 +42,5 @@ def clean_costs_per_child(df: pd.DataFrame) -> pd.DataFrame:
     d = d.dropna(subset=["Year"]).copy()
     d["Year"] = d["Year"].astype(int)
 
-    # Keep only relevant columns if present
     cols = ["Year"] + [c for c in ["Fixed_cost_per_child_kr", "Current_cost_per_child_kr"] if c in d.columns]
     return d[cols].sort_values("Year").reset_index(drop=True)
