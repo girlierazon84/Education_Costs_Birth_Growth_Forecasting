@@ -3,13 +3,19 @@
 from __future__ import annotations
 
 import logging
-import sqlite3
 from pathlib import Path
 from typing import Any
 
 import pandas as pd
 
 from eduforecast.common.config import AppConfig
+from eduforecast.io.db import ensure_index, write_table
+from eduforecast.io.readers import (
+    read_births_raw,
+    read_migration_raw,
+    read_mortality_raw,
+    read_population_raw,
+)
 from eduforecast.preprocessing.clean_births import clean_births
 from eduforecast.preprocessing.clean_mortality import clean_mortality
 from eduforecast.preprocessing.clean_population import clean_population
@@ -39,24 +45,13 @@ def _ensure_dir(path: Path) -> None:
     path.mkdir(parents=True, exist_ok=True)
 
 
-def _write_sqlite(df: pd.DataFrame, db_path: Path, table: str) -> None:
-    db_path.parent.mkdir(parents=True, exist_ok=True)
-    with sqlite3.connect(db_path) as con:
-        df.to_sql(table, con, if_exists="replace", index=False)
-
-
-def _read_migration(path: Path) -> pd.DataFrame:
-    """Migration is sometimes semicolon-separated; fallback to comma."""
-    try:
-        return pd.read_csv(path, sep=";")
-    except Exception:
-        return pd.read_csv(path)
-
-
 def _clean_migration(migration: pd.DataFrame) -> pd.DataFrame:
     """
     Standardize migration to:
         Region_Code, Region_Name, Age, Year, Number
+
+    NOTE: kept local for now. If you want, we can move this into:
+        eduforecast.preprocessing.clean_migration
     """
     d = migration.copy()
     d.columns = [c.strip() for c in d.columns]
@@ -67,6 +62,7 @@ def _clean_migration(migration: pd.DataFrame) -> pd.DataFrame:
             "Total_Migrations": "Number",
             "År": "Year",
             "Ar": "Year",
+            "year": "Year",
         }
     )
 
@@ -75,7 +71,13 @@ def _clean_migration(migration: pd.DataFrame) -> pd.DataFrame:
     if missing:
         raise KeyError(f"Migration missing columns {sorted(missing)}. Found: {list(d.columns)}")
 
-    d["Region_Code"] = d["Region_Code"].astype("string").str.strip().str.replace(r"\.0$", "", regex=True).str.zfill(2)
+    d["Region_Code"] = (
+        d["Region_Code"]
+        .astype("string")
+        .str.strip()
+        .str.replace(r"\.0$", "", regex=True)
+        .str.zfill(2)
+    )
     if "Region_Name" not in d.columns:
         d["Region_Name"] = d["Region_Code"]
     d["Region_Name"] = d["Region_Name"].astype(str).str.strip()
@@ -108,22 +110,23 @@ def run_etl(cfg: AppConfig) -> None:
         raise ValueError("Missing database.sqlite_path in config")
     db_path = _resolve(cfg, sqlite_path)
 
-    # --- Load raw ---
-    births_raw = pd.read_csv(raw_dir / "birth_data_per_region.csv")
-    mortality_raw = pd.read_csv(raw_dir / "mortality_data_per_region.csv")
-    pop_0_16_raw = pd.read_csv(raw_dir / "population_0_16_years.csv")
-    pop_17_19_raw = pd.read_csv(raw_dir / "population_17_19_years.csv")
-    migration_raw = _read_migration(raw_dir / "migration_data_per_region.csv")
+    # --- Load raw via IO layer (raw-only) ---
+    births_raw = read_births_raw(raw_dir / "birth_data_per_region.csv")
+    mortality_raw = read_mortality_raw(raw_dir / "mortality_data_per_region.csv")
 
-    # --- Clean using shared preprocessing ---
+    pop_0_16_raw = read_population_raw(raw_dir / "population_0_16_years.csv")
+    pop_17_19_raw = read_population_raw(raw_dir / "population_17_19_years.csv")
+    pop_all_raw = pd.concat([pop_0_16_raw, pop_17_19_raw], ignore_index=True)
+
+    migration_raw = read_migration_raw(raw_dir / "migration_data_per_region.csv")
+
+    # --- Clean using preprocessing package ---
     births_clean = clean_births(births_raw)
     mortality_clean = clean_mortality(mortality_raw)
-
-    pop_all = pd.concat([pop_0_16_raw, pop_17_19_raw], ignore_index=True)
-    population_clean = clean_population(pop_all)
+    population_clean = clean_population(pop_all_raw)
     migration_clean = _clean_migration(migration_raw)
 
-    # Region map is derived (consistent)
+    # Derived region map (consistent)
     region_map = (
         pd.concat(
             [
@@ -146,11 +149,17 @@ def run_etl(cfg: AppConfig) -> None:
     migration_clean.to_csv(processed_dir / "migration_processed.csv", index=False)
     region_map.to_csv(processed_dir / "region_map.csv", index=False)
 
-    # --- Write SQLite tables ---
-    _write_sqlite(births_clean, db_path, "birth_data_per_region")
-    _write_sqlite(mortality_clean, db_path, "mortality_data_per_region")
-    _write_sqlite(population_clean, db_path, "population_0_19_per_region")
-    _write_sqlite(migration_clean, db_path, "migration_data_per_region")
+    # --- Write SQLite tables (via io.db) ---
+    write_table(db_path, "birth_data_per_region", births_clean, if_exists="replace", index=False)
+    write_table(db_path, "mortality_data_per_region", mortality_clean, if_exists="replace", index=False)
+    write_table(db_path, "population_0_19_per_region", population_clean, if_exists="replace", index=False)
+    write_table(db_path, "migration_data_per_region", migration_clean, if_exists="replace", index=False)
+
+    # Helpful indexes for faster reads / joins
+    ensure_index(db_path, "birth_data_per_region", ["Region_Code", "Year"], unique=False)
+    ensure_index(db_path, "mortality_data_per_region", ["Region_Code", "Age", "Year"], unique=False)
+    ensure_index(db_path, "population_0_19_per_region", ["Region_Code", "Age", "Year"], unique=False)
+    ensure_index(db_path, "migration_data_per_region", ["Region_Code", "Age", "Year"], unique=False)
 
     # --- Light sanity checks ---
     assert births_clean["Region_Code"].astype(str).str.len().eq(2).all()
