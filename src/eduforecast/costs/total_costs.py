@@ -3,51 +3,20 @@
 from __future__ import annotations
 
 from pathlib import Path
+
 import pandas as pd
 
-
-def _standardize_cost_columns(df: pd.DataFrame) -> pd.DataFrame:
-    """
-    Accept either:
-        - Fixed_cost_per_child_kr / Current_cost_per_child_kr
-        - Fixed_Cost_Per_Child_SEK / Current_Cost_Per_Child_SEK
-    and standardize to:
-        - Fixed_cost_per_child_kr / Current_cost_per_child_kr
-    """
-    df = df.copy()
-    df.columns = [c.strip() for c in df.columns]
-
-    mapping_variants = {
-        "Fixed_Cost_Per_Child_SEK": "Fixed_cost_per_child_kr",
-        "Current_Cost_Per_Child_SEK": "Current_cost_per_child_kr",
-        "Fixed_cost_per_child_kr": "Fixed_cost_per_child_kr",
-        "Current_cost_per_child_kr": "Current_cost_per_child_kr",
-    }
-
-    rename_map = {c: mapping_variants[c] for c in df.columns if c in mapping_variants}
-    df = df.rename(columns=rename_map)
-
-    required = {"Year", "Fixed_cost_per_child_kr", "Current_cost_per_child_kr"}
-    missing = required - set(df.columns)
-    if missing:
-        raise ValueError(
-            f"Cost table is missing required columns {sorted(missing)}. "
-            f"Found columns: {list(df.columns)}"
-        )
-
-    df["Year"] = df["Year"].astype(int)
-    for c in ["Fixed_cost_per_child_kr", "Current_cost_per_child_kr"]:
-        df[c] = pd.to_numeric(df[c], errors="coerce")
-
-    return df
+from eduforecast.preprocessing.clean_costs import clean_costs_per_child
 
 
-def load_cost_tables(grund_path: Path, gymn_path: Path, *, anchor_max_year: int | None = None):
-    grund = pd.read_csv(grund_path)
-    gymn = pd.read_csv(gymn_path)
-
-    grund = _standardize_cost_columns(grund)
-    gymn = _standardize_cost_columns(gymn)
+def load_cost_tables(
+    grund_path: Path,
+    gymn_path: Path,
+    *,
+    anchor_max_year: int | None = None,
+) -> tuple[pd.DataFrame, pd.DataFrame]:
+    grund = clean_costs_per_child(pd.read_csv(grund_path))
+    gymn = clean_costs_per_child(pd.read_csv(gymn_path))
 
     if anchor_max_year is not None:
         grund = grund[grund["Year"] <= int(anchor_max_year)].copy()
@@ -65,25 +34,27 @@ def compute_education_costs(
     annual_growth_rate: float = 0.0,
 ) -> pd.DataFrame:
     """
-    pop_forecast columns expected:
-        Region_Code, Region_Name, Age, Year, Forecast_Population (floats)
+    pop_forecast expected columns:
+        Region_Code, Region_Name, Age, Year, Forecast_Population
 
-    grund/gymn columns expected (standardized by load_cost_tables):
+    cost tables expected columns:
         Year, Fixed_cost_per_child_kr, Current_cost_per_child_kr
 
-    extrapolation:
-        - "carry_forward": use last known cost for future years (default)
-        - "growth_rate": grow last known cost forward using annual_growth_rate
+    NOTE:
+      Fixed vs Current are alternative bases (real vs nominal) — DO NOT add them.
     """
     df = pop_forecast.copy()
-    df["Region_Code"] = df["Region_Code"].astype(str).str.zfill(2)
-    df["Region_Name"] = df["Region_Name"].astype(str)
+    df["Region_Code"] = df["Region_Code"].astype("string").str.strip().str.zfill(2)
+    df["Region_Name"] = df.get("Region_Name", df["Region_Code"]).astype(str).str.strip()
+    df["Year"] = pd.to_numeric(df["Year"], errors="coerce").astype("Int64")
+    df["Age"] = pd.to_numeric(df["Age"], errors="coerce").astype("Int64")
+    df["Forecast_Population"] = pd.to_numeric(df["Forecast_Population"], errors="coerce").astype(float)
+    df = df.dropna(subset=["Year", "Age", "Forecast_Population"]).copy()
     df["Year"] = df["Year"].astype(int)
     df["Age"] = df["Age"].astype(int)
 
-    # Age ranges (adjust if you want)
-    grund_ages = set(range(7, 17))  # 7–16
-    gymn_ages = set(range(17, 20))  # 17–19
+    grund_ages = set(range(7, 17))   # 7–16
+    gymn_ages = set(range(17, 20))   # 17–19
 
     grund_students = (
         df[df["Age"].isin(grund_ages)]
@@ -102,39 +73,29 @@ def compute_education_costs(
     gymn_students["School_Type"] = "gymnasieskola"
 
     students = pd.concat([grund_students, gymn_students], ignore_index=True)
-
-    # normalize types AFTER students exists
-    students["Region_Code"] = students["Region_Code"].astype(str).str.zfill(2)
     students["School_Type"] = students["School_Type"].astype(str).str.strip().str.lower()
 
-    # Prepare costs for as-of merge (and keep matched year as Cost_Year)
+    # ensure costs are clean
+    grund = clean_costs_per_child(grund)
+    gymn = clean_costs_per_child(gymn)
+
     grund_c = grund.sort_values("Year")[["Year", "Fixed_cost_per_child_kr", "Current_cost_per_child_kr"]].copy()
     gymn_c = gymn.sort_values("Year")[["Year", "Fixed_cost_per_child_kr", "Current_cost_per_child_kr"]].copy()
     grund_c["Cost_Year"] = grund_c["Year"]
     gymn_c["Cost_Year"] = gymn_c["Year"]
 
-    out_parts = []
+    out_parts: list[pd.DataFrame] = []
 
     for school_type, cost_df in [("grundskola", grund_c), ("gymnasieskola", gymn_c)]:
         s = students[students["School_Type"] == school_type].sort_values("Year").copy()
 
-        merged = pd.merge_asof(
-            s,
-            cost_df,
-            on="Year",
-            direction="backward",
-        )
+        merged = pd.merge_asof(s, cost_df, on="Year", direction="backward")
 
         # If forecasting earlier than first cost year, fallback to earliest cost
         if merged["Fixed_cost_per_child_kr"].isna().any():
-            merged = pd.merge_asof(
-                s,
-                cost_df,
-                on="Year",
-                direction="forward",
-            )
+            merged = pd.merge_asof(s, cost_df, on="Year", direction="forward")
 
-        if extrapolation == "growth_rate":
+        if str(extrapolation).lower() == "growth_rate":
             yrs = (merged["Year"] - merged["Cost_Year"]).clip(lower=0)
             growth = (1.0 + float(annual_growth_rate)) ** yrs
             merged["Fixed_cost_per_child_kr"] = merged["Fixed_cost_per_child_kr"] * growth
@@ -157,5 +118,5 @@ def compute_education_costs(
             ]
         )
 
-    out = pd.concat(out_parts, ignore_index=True).sort_values(["Region_Code", "Year", "School_Type"])
+    out = pd.concat(out_parts, ignore_index=True).sort_values(["Region_Code", "Year", "School_Type"]).reset_index(drop=True)
     return out
