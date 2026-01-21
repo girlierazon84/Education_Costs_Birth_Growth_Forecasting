@@ -3,7 +3,6 @@
 from __future__ import annotations
 
 import logging
-import sqlite3
 from pathlib import Path
 from typing import Any
 
@@ -13,6 +12,7 @@ import numpy as np
 import pandas as pd
 
 from eduforecast.common.config import AppConfig
+from eduforecast.io.db import read_table
 from eduforecast.modeling.baselines import fit_drift, fit_naive_last
 from eduforecast.modeling.evaluation import compute_metrics
 from eduforecast.modeling.selection import pick_best_model
@@ -60,9 +60,31 @@ def _get(cfg_obj: Any, key: str, default: Any = None) -> Any:
     return default
 
 
-def _read_births_sqlite(db_path: Path) -> pd.DataFrame:
-    with sqlite3.connect(db_path) as con:
-        return pd.read_sql("SELECT * FROM birth_data_per_region", con)
+def _normalize_births_schema(df: pd.DataFrame) -> pd.DataFrame:
+    d = df.copy()
+    d.columns = [c.strip() for c in d.columns]
+
+    required = {"Region_Code", "Year", "Number"}
+    missing = required - set(d.columns)
+    if missing:
+        raise KeyError(f"Births table missing columns {sorted(missing)}. Found: {list(d.columns)}")
+
+    d["Region_Code"] = (
+        d["Region_Code"]
+        .astype("string")
+        .str.strip()
+        .str.replace(r"\.0$", "", regex=True)
+        .str.zfill(2)
+    )
+    d["Region_Name"] = d.get("Region_Name", d["Region_Code"]).astype(str).str.strip()
+    d["Year"] = pd.to_numeric(d["Year"], errors="coerce").astype("Int64")
+    d["Number"] = pd.to_numeric(d["Number"], errors="coerce")
+
+    d = d.dropna(subset=["Year", "Number"]).copy()
+    d["Year"] = d["Year"].astype(int)
+    d["Number"] = d["Number"].astype(float)
+
+    return d[["Region_Code", "Region_Name", "Year", "Number"]].sort_values(["Region_Code", "Year"]).reset_index(drop=True)
 
 
 def run_train(cfg: AppConfig) -> None:
@@ -71,17 +93,8 @@ def run_train(cfg: AppConfig) -> None:
         raise ValueError("Missing database.sqlite_path in config")
     db_path = _resolve(cfg, sqlite_path)
 
-    births = _read_births_sqlite(db_path)
-
-    births = births.copy()
-    births["Region_Code"] = births["Region_Code"].astype("string").str.strip().str.zfill(2)
-    births["Region_Name"] = births.get("Region_Name", births["Region_Code"]).astype(str).str.strip()
-    births["Year"] = pd.to_numeric(births["Year"], errors="coerce").astype("Int64")
-    births["Number"] = pd.to_numeric(births["Number"], errors="coerce")
-
-    births = births.dropna(subset=["Year", "Number"]).copy()
-    births["Year"] = births["Year"].astype(int)
-    births["Number"] = births["Number"].astype(float)
+    births = read_table(db_path, "birth_data_per_region")
+    births = _normalize_births_schema(births)
 
     start_year = _safe_int(_get(cfg.modeling, "start_year", 1968), 1968)
     births = births[births["Year"] >= start_year].copy()
