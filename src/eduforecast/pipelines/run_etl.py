@@ -20,7 +20,6 @@ from eduforecast.preprocessing.clean_births import clean_births
 from eduforecast.preprocessing.clean_mortality import clean_mortality
 from eduforecast.preprocessing.clean_population import clean_population
 
-
 logger = logging.getLogger(__name__)
 
 
@@ -59,7 +58,9 @@ def _clean_migration(migration: pd.DataFrame) -> pd.DataFrame:
     d = d.rename(
         columns={
             "Region": "Region_Code",
+            "region": "Region_Code",
             "Total_Migrations": "Number",
+            "total_migrations": "Number",
             "År": "Year",
             "Ar": "Year",
             "year": "Year",
@@ -78,6 +79,7 @@ def _clean_migration(migration: pd.DataFrame) -> pd.DataFrame:
         .str.replace(r"\.0$", "", regex=True)
         .str.zfill(2)
     )
+
     if "Region_Name" not in d.columns:
         d["Region_Name"] = d["Region_Code"]
     d["Region_Name"] = d["Region_Name"].astype(str).str.strip()
