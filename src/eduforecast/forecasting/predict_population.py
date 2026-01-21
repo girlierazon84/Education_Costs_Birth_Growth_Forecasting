@@ -6,7 +6,7 @@ from pathlib import Path
 
 import pandas as pd
 
-from eduforecast.features.build_features import build_population_forecast_features
+from eduforecast.features.cohort_pipeline import forecast_population_0_19
 
 
 def predict_population_0_19(
@@ -18,12 +18,8 @@ def predict_population_0_19(
 ) -> pd.DataFrame:
     """
     Produce population 0–19 forecast using cohort aging + survival + migration baseline.
-
-    births_forecast must contain:
-        Region_Code, Year, Forecast_Births
-    Region_Name optional.
     """
-    return build_population_forecast_features(
+    return forecast_population_0_19(
         births_forecast=births_forecast,
         db_path=db_path,
         start_year=int(start_year),
