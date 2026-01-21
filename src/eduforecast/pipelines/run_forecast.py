@@ -11,11 +11,11 @@ import numpy as np
 import pandas as pd
 
 from eduforecast.common.config import AppConfig
-from eduforecast.costs.total_costs import compute_education_costs, load_cost_tables
+from eduforecast.costs.cost_per_child import load_cost_tables  # UPDATED
+from eduforecast.costs.total_costs import compute_education_costs
 from eduforecast.forecasting.predict_births import predict_births_all_regions
 from eduforecast.forecasting.predict_population import predict_population_0_19
 from eduforecast.io.writers import write_forecast_artifact
-
 
 logger = logging.getLogger(__name__)
 
@@ -207,7 +207,7 @@ def run_forecast(cfg: AppConfig) -> None:
     grund_path = _resolve(cfg, grund_rel)
     gymn_path = _resolve(cfg, gymn_rel)
 
-    grund, gymn = load_cost_tables(
+    tables = load_cost_tables(
         grund_path,
         gymn_path,
         anchor_max_year=_get(costs_cfg, "anchor_max_year", None),
@@ -215,8 +215,8 @@ def run_forecast(cfg: AppConfig) -> None:
 
     costs_df = compute_education_costs(
         pop_forecast=pop_forecast,
-        grund=grund,
-        gymn=gymn,
+        grund=tables.grund,
+        gymn=tables.gymn,
         extrapolation=str(_get(costs_cfg, "extrapolation", "carry_forward")),
         annual_growth_rate=float(_get(costs_cfg, "annual_growth_rate", 0.0)),
     )
