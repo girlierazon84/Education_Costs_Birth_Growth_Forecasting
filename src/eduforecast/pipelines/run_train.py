@@ -18,7 +18,6 @@ from eduforecast.modeling.evaluation import compute_metrics
 from eduforecast.modeling.selection import pick_best_model
 from eduforecast.modeling.ts_models import fit_ets
 
-
 logger = logging.getLogger(__name__)
 
 
@@ -84,7 +83,11 @@ def _normalize_births_schema(df: pd.DataFrame) -> pd.DataFrame:
     d["Year"] = d["Year"].astype(int)
     d["Number"] = d["Number"].astype(float)
 
-    return d[["Region_Code", "Region_Name", "Year", "Number"]].sort_values(["Region_Code", "Year"]).reset_index(drop=True)
+    return (
+        d[["Region_Code", "Region_Name", "Year", "Number"]]
+        .sort_values(["Region_Code", "Year"])
+        .reset_index(drop=True)
+    )
 
 
 def run_train(cfg: AppConfig) -> None:
@@ -106,6 +109,8 @@ def run_train(cfg: AppConfig) -> None:
 
     candidates = _get(cfg.modeling, "candidates", ["baseline_naive", "drift", "exp_smoothing"])
     metric_primary = str(_get(cfg.modeling, "metric_primary", "rmse")).lower()
+    metric_key = {"rmse": "RMSE", "mae": "MAE", "smape": "SMAPE"}.get(metric_primary, "RMSE")
+
     cv_cfg = _get(cfg.modeling, "cv", {}) or {}
     n_splits = _safe_int(_get(cv_cfg, "n_splits", 5), 5)
 
@@ -169,7 +174,8 @@ def run_train(cfg: AppConfig) -> None:
             y_pred = np.asarray(preds, dtype=float)
 
             mpack = compute_metrics(y_true, y_pred)
-            mdict = {k.upper(): v for k, v in mpack.as_dict().items()}
+            # Already stable keys: RMSE/MAE/SMAPE
+            mdict = mpack.as_dict()
 
             if not np.isfinite(mdict.get("RMSE", np.nan)):
                 logger.warning("No valid CV points for %s %s model=%s", rc, rn, model_name)
@@ -180,16 +186,16 @@ def run_train(cfg: AppConfig) -> None:
             row = {
                 "Region_Code": rc,
                 "Region_Name": rn,
-                "Model": model_name,
+                "Model": str(model_name).strip(),
                 "Start_Year": int(years.min()),
                 "End_Year": int(years.max()),
                 "CV_Points": int(valid_pairs.sum()),
-                **mdict,
+                **{k.upper(): float(v) for k, v in mdict.items()},
             }
             all_rows.append(row)
             region_rows.append(row)
 
-            region_debug[model_name] = {
+            region_debug[str(model_name).strip()] = {
                 "split_years": split_years,
                 "y_true": y_true,
                 "y_pred": y_pred,
@@ -198,9 +204,9 @@ def run_train(cfg: AppConfig) -> None:
         if not region_rows:
             continue
 
-        primary = metric_primary if metric_primary in {"rmse", "mae", "smape"} else "rmse"
-        sel = pick_best_model(region_rows, primary=primary)
-        best_name = sel.best_model
+        # Selection expects stable metric key names
+        sel = pick_best_model(region_rows, primary=metric_key)
+        best_name = str(sel.best_model).strip()
 
         if best_name == "baseline_naive":
             best_model = fit_naive_last(y)
@@ -212,6 +218,7 @@ def run_train(cfg: AppConfig) -> None:
         dbg = region_debug.get(best_name, {})
         y_true_cv = np.asarray(dbg.get("y_true", []), dtype=float)
         y_pred_cv = np.asarray(dbg.get("y_pred", []), dtype=float)
+
         resid = (y_true_cv - y_pred_cv)
         resid = resid[np.isfinite(resid)]
         sigma = float(np.std(resid)) if resid.size > 5 else None
@@ -237,13 +244,13 @@ def run_train(cfg: AppConfig) -> None:
 
         # Diagnostic plot
         try:
-            split_years = dbg.get("split_years", [])
+            split_years_plot = dbg.get("split_years", [])
             y_pred_plot = np.asarray(dbg.get("y_pred", []), dtype=float)
 
             plt.figure()
             plt.plot(years, y)
-            if len(split_years) == len(y_pred_plot) and len(split_years) > 0:
-                plt.scatter(split_years, y_pred_plot)
+            if len(split_years_plot) == len(y_pred_plot) and len(split_years_plot) > 0:
+                plt.scatter(split_years_plot, y_pred_plot)
             plt.title(f"Births: {rc} {rn} | Best: {best_name}")
             plt.xlabel("Year")
             plt.ylabel("Births (Number)")
@@ -259,8 +266,13 @@ def run_train(cfg: AppConfig) -> None:
     else:
         metrics_df = metrics_df.sort_values(["Region_Code"]).reset_index(drop=True)
 
-    metrics_path = metrics_dir / "model_comparison_births.csv"
-    metrics_df.to_csv(metrics_path, index=False)
+    # NEW canonical name used by dashboards/pages/2_Model_Comparison.py
+    scores_path = metrics_dir / "model_scores_births.csv"
+    metrics_df.to_csv(scores_path, index=False)
+
+    # Back-compat name (older references)
+    legacy_path = metrics_dir / "model_comparison_births.csv"
+    metrics_df.to_csv(legacy_path, index=False)
 
     best_df = (
         pd.DataFrame.from_dict(best_models, orient="index")
@@ -273,6 +285,7 @@ def run_train(cfg: AppConfig) -> None:
     best_df.to_csv(best_path, index=False)
 
     logger.info("Training complete.")
-    logger.info("Saved model comparison: %s", metrics_path)
+    logger.info("Saved model scores: %s", scores_path)
+    logger.info("Saved legacy model comparison: %s", legacy_path)
     logger.info("Saved best model list: %s", best_path)
     logger.info("Saved models to: %s", models_dir)
