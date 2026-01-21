@@ -6,7 +6,7 @@ from typing import Mapping
 
 import pandas as pd
 
-# Default mapping (optional): Region_Code -> Region_Name
+
 DEFAULT_REGION_CODE_TO_NAME: dict[str, str] = {
     "01": "Stockholms län",
     "03": "Uppsala län",
@@ -49,24 +49,19 @@ def clean_births(
     d = df.copy()
     d.columns = [c.strip() for c in d.columns]
 
-    # Rename common columns -> canonical
     rename_map = {
-        # region code
         "Region": "Region_Code",
         "region": "Region_Code",
         "Länskod": "Region_Code",
         "LanKod": "Region_Code",
         "region_code": "Region_Code",
-        # region name
         "Län": "Region_Name",
         "Lan": "Region_Name",
         "RegionNamn": "Region_Name",
         "region_name": "Region_Name",
-        # year
         "År": "Year",
         "Ar": "Year",
         "year": "Year",
-        # value
         "Total_Births": "Number",
         "total_births": "Number",
         "Births": "Number",
@@ -82,7 +77,13 @@ def clean_births(
     if missing:
         raise KeyError(f"Births missing columns {sorted(missing)}. Found: {list(d.columns)}")
 
-    d["Region_Code"] = d["Region_Code"].astype("string").str.strip().str.zfill(2)
+    d["Region_Code"] = (
+        d["Region_Code"]
+        .astype("string")
+        .str.strip()
+        .str.replace(r"\.0$", "", regex=True)
+        .str.zfill(2)
+    )
     d["Year"] = pd.to_numeric(d["Year"], errors="coerce").astype("Int64")
     d["Number"] = pd.to_numeric(d["Number"], errors="coerce").astype(float)
     d = d.dropna(subset=["Year", "Number"]).copy()
@@ -99,8 +100,4 @@ def clean_births(
     )
     d["Region_Name"] = d["Region_Name"].fillna(d["Region_Code"]).astype(str)
 
-    return (
-        d[["Region_Code", "Region_Name", "Year", "Number"]]
-        .sort_values(["Region_Code", "Year"])
-        .reset_index(drop=True)
-    )
+    return d[["Region_Code", "Region_Name", "Year", "Number"]].sort_values(["Region_Code", "Year"]).reset_index(drop=True)
