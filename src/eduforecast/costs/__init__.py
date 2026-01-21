@@ -3,7 +3,6 @@
 from __future__ import annotations
 
 from .cost_per_child import (
-    CostBasis,
     CostTables,
     ExtrapolationMethod,
     cost_schedule_for_years,
@@ -12,9 +11,8 @@ from .cost_per_child import (
 from .total_costs import compute_education_costs
 
 __all__ = [
-    "CostBasis",
-    "ExtrapolationMethod",
     "CostTables",
+    "ExtrapolationMethod",
     "load_cost_tables",
     "cost_schedule_for_years",
     "compute_education_costs",
