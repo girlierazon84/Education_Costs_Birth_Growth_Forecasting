@@ -13,23 +13,22 @@ import numpy as np
 import pandas as pd
 
 from eduforecast.forecasting.intervals import IntervalResult, empirical_pi, normal_pi
-from eduforecast.forecasting.ets_models import ETSModel, ETSNoSeason, NaiveLastModel
+from eduforecast.forecasting.ets_models import ETSNoSeason  # legacy compat shim only
+
 
 logger = logging.getLogger(__name__)
 
 
 def _install_pickle_compat_shims() -> None:
     """
-    Allow loading legacy joblib artifacts saved from notebooks/scripts where
-    classes were recorded as __main__.ClassName.
+    Allow loading legacy joblib artifacts saved when classes were recorded as __main__.ClassName.
+    We only shim the legacy names that appear in old pickles.
     """
     main_mod = sys.modules.get("__main__")
     if main_mod is None:
         return
-    # These names must match what old pickles reference.
+    # Old pickle referenced __main__.ETSNoSeason
     setattr(main_mod, "ETSNoSeason", ETSNoSeason)
-    setattr(main_mod, "ETSModel", ETSModel)
-    setattr(main_mod, "NaiveLastModel", NaiveLastModel)
 
 
 @dataclass(frozen=True)
@@ -53,7 +52,6 @@ class BirthForecastOutput:
         )
         if self.intervals is None:
             return base
-
         iv = self.intervals.to_frame(self.years, "Forecast_Births")
         return base.merge(iv, on="Year", how="left")
 
@@ -67,10 +65,9 @@ def _safe_str(x: Any, default: str = "") -> str:
 
 def _predict_steps(model: Any, steps: int) -> np.ndarray:
     """
-    Support a few common forecast interfaces:
-      - wrapper models: model.predict(steps=steps)
+    Support common forecast interfaces:
+      - wrapper models: model.predict(steps=steps) or model.predict(steps)
       - statsmodels results: model.forecast(steps)
-      - some statsmodels: model.predict(steps=steps)
     """
     steps = int(steps)
 
@@ -79,13 +76,15 @@ def _predict_steps(model: Any, steps: int) -> np.ndarray:
             yhat = model.predict(steps=steps)
             return np.squeeze(np.asarray(yhat, dtype=float))
         except TypeError:
-            pass  # try forecast fallback
+            # maybe predict(steps) without kw
+            yhat = model.predict(steps)
+            return np.squeeze(np.asarray(yhat, dtype=float))
 
     if hasattr(model, "forecast"):
         yhat = model.forecast(steps)
         return np.squeeze(np.asarray(yhat, dtype=float))
 
-    raise TypeError("Loaded model object does not support predict(steps=) or forecast(steps).")
+    raise TypeError("Loaded model object does not support predict/forecast steps interface.")
 
 
 def _extract_residuals(payload: dict[str, Any]) -> np.ndarray | None:
@@ -203,8 +202,4 @@ def predict_births_all_regions(
     if not out_frames:
         return pd.DataFrame(columns=["Region_Code", "Region_Name", "Year", "Model", "Forecast_Births"])
 
-    return (
-        pd.concat(out_frames, ignore_index=True)
-        .sort_values(["Region_Code", "Year"])
-        .reset_index(drop=True)
-    )
+    return pd.concat(out_frames, ignore_index=True).sort_values(["Region_Code", "Year"]).reset_index(drop=True)
