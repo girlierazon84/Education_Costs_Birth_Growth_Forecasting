@@ -12,17 +12,24 @@ from statsmodels.tsa.holtwinters import ExponentialSmoothing
 @dataclass(frozen=True)
 class ETSModel:
     """
-    Wrapper around a statsmodels Holt-Winters fitted model.
-    Stored as a normal importable class so joblib can unpickle it.
+    Wrapper around statsmodels Holt-Winters fitted result.
+    Importable path ensures joblib can unpickle it.
     """
     fitted: Any
 
     def predict(self, steps: int) -> np.ndarray:
-        return np.asarray(self.fitted.forecast(int(steps)), dtype=float)
+        steps = int(steps)
+        if steps < 0:
+            raise ValueError("steps must be >= 0")
+        if not hasattr(self.fitted, "forecast"):
+            raise TypeError("ETS fitted object missing .forecast()")
+        return np.asarray(self.fitted.forecast(steps), dtype=float)
 
 
 def fit_ets(y_train: np.ndarray) -> ETSModel:
     y = np.asarray(y_train, dtype=float)
+    if y.size == 0:
+        raise ValueError("Cannot fit ETS on empty series.")
 
     # Preferred: damped additive trend, no seasonality
     try:
