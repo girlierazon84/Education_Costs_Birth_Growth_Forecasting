@@ -50,11 +50,21 @@ def _clean_migration(migration: pd.DataFrame) -> pd.DataFrame:
     """
     Standardize migration to:
         Region_Code, Region_Name, Age, Year, Number
-
-    NOTE: kept local for now. If you want, we can move this into:
-        eduforecast.preprocessing.clean_migration
     """
     d = migration.copy()
+
+    # ---- FIX: handle "single column because delimiter mismatch" ----
+    if d.shape[1] == 1:
+        col0 = str(d.columns[0])
+        # If header itself contains separators, rebuild dataframe by splitting
+        if ("," in col0) or (";" in col0) or ("\t" in col0):
+            sep = "," if "," in col0 else (";" if ";" in col0 else "\t")
+            header = [h.strip() for h in col0.split(sep)]
+            # rows are strings like "01,10,2023,100" -> split into columns
+            split = d.iloc[:, 0].astype(str).str.split(sep, expand=True)
+            split.columns = header[: split.shape[1]]
+            d = split
+
     d.columns = [c.strip() for c in d.columns]
 
     d = d.rename(
