@@ -3,7 +3,6 @@
 from __future__ import annotations
 
 import logging
-import sqlite3
 from pathlib import Path
 from typing import Any
 
@@ -11,6 +10,7 @@ import numpy as np
 import pandas as pd
 
 from eduforecast.common.config import AppConfig
+from eduforecast.io.db import read_table
 
 
 logger = logging.getLogger(__name__)
@@ -37,9 +37,38 @@ def _ensure_parent(path: Path) -> None:
     path.parent.mkdir(parents=True, exist_ok=True)
 
 
-def _read_births_sqlite(db_path: Path) -> pd.DataFrame:
-    with sqlite3.connect(db_path) as con:
-        return pd.read_sql("SELECT * FROM birth_data_per_region", con)
+def _normalize_births_schema(df: pd.DataFrame) -> pd.DataFrame:
+    """Defensive normalization for births read from SQLite."""
+    d = df.copy()
+    d.columns = [c.strip() for c in d.columns]
+
+    # expected: Region_Code, Region_Name, Year, Number
+    if "Region_Code" not in d.columns and "Region" in d.columns:
+        d = d.rename(columns={"Region": "Region_Code"})
+    if "Number" not in d.columns and "Total_Births" in d.columns:
+        d = d.rename(columns={"Total_Births": "Number"})
+
+    required = {"Region_Code", "Year", "Number"}
+    missing = required - set(d.columns)
+    if missing:
+        raise KeyError(f"Births table missing columns {sorted(missing)}. Found: {list(d.columns)}")
+
+    d["Region_Code"] = (
+        d["Region_Code"]
+        .astype("string")
+        .str.strip()
+        .str.replace(r"\.0$", "", regex=True)
+        .str.zfill(2)
+    )
+    d["Region_Name"] = d.get("Region_Name", d["Region_Code"]).astype(str).str.strip()
+    d["Year"] = pd.to_numeric(d["Year"], errors="coerce").astype("Int64")
+    d["Number"] = pd.to_numeric(d["Number"], errors="coerce")
+
+    d = d.dropna(subset=["Year", "Number"]).copy()
+    d["Year"] = d["Year"].astype(int)
+    d["Number"] = d["Number"].astype(float)
+
+    return d[["Region_Code", "Region_Name", "Year", "Number"]].sort_values(["Region_Code", "Year"]).reset_index(drop=True)
 
 
 def run_eda_births(cfg: AppConfig) -> None:
@@ -49,17 +78,8 @@ def run_eda_births(cfg: AppConfig) -> None:
         raise ValueError("Missing database.sqlite_path in config")
     db_path = _resolve(cfg, sqlite_path)
 
-    births = _read_births_sqlite(db_path)
-
-    # --- Normalize schema ---
-    births = births.copy()
-    births["Region_Code"] = births["Region_Code"].astype("string").str.strip().str.zfill(2)
-    births["Region_Name"] = births.get("Region_Name", births["Region_Code"]).astype(str).str.strip()
-    births["Year"] = pd.to_numeric(births["Year"], errors="coerce").astype("Int64")
-    births["Number"] = pd.to_numeric(births["Number"], errors="coerce").astype(float)
-
-    births = births.dropna(subset=["Year", "Number"]).copy()
-    births["Year"] = births["Year"].astype(int)
+    births = read_table(db_path, "birth_data_per_region")
+    births = _normalize_births_schema(births)
 
     start_year = int(_get(cfg.modeling, "start_year", 1968))
     births = births[births["Year"] >= start_year].copy()
@@ -88,7 +108,6 @@ def run_eda_births(cfg: AppConfig) -> None:
             number_min=("Number", "min"),
             number_max=("Number", "max"),
             number_mean=("Number", "mean"),
-            number_missing=("Number", lambda s: int(pd.isna(s).sum())),
         )
         .reset_index()
         .sort_values(["Region_Code"])
@@ -111,14 +130,13 @@ def run_eda_births(cfg: AppConfig) -> None:
     _ensure_parent(out_dup)
     dup.to_csv(out_dup, index=False)
 
-    # 3) Missing years per region between each region's min..max  (FIXED)
+    # 3) Missing years per region between each region's min..max
     missing_rows: list[dict[str, Any]] = []
     for (rc, rn), g in births.groupby(["Region_Code", "Region_Name"], dropna=False):
         ymin, ymax = int(g["Year"].min()), int(g["Year"].max())
         expected = set(range(ymin, ymax + 1))
         observed = set(g["Year"].unique().tolist())
-        missing = sorted(expected - observed)
-        for y in missing:
+        for y in sorted(expected - observed):
             missing_rows.append({"Region_Code": rc, "Region_Name": rn, "Missing_Year": int(y)})
 
     missing_years = pd.DataFrame(missing_rows, columns=["Region_Code", "Region_Name", "Missing_Year"])
@@ -140,7 +158,10 @@ def run_eda_births(cfg: AppConfig) -> None:
             continue
 
         med = float(np.median(yoy))
-        mad = float(np.median(np.abs(yoy - med))) or 1.0
+        mad = float(np.median(np.abs(yoy - med)))
+        if not np.isfinite(mad) or mad == 0.0:
+            continue
+
         gg["robust_z"] = (gg["YoY"] - med) / (1.4826 * mad)
 
         flagged = gg.loc[gg["robust_z"].abs() >= 4, ["Year", "Number", "YoY", "robust_z"]]
