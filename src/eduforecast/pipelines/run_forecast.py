@@ -27,8 +27,18 @@ def _safe_int(x: Any, default: int) -> int:
         return default
 
 
+def _get(cfg_obj: Any, key: str, default: Any = None) -> Any:
+    if cfg_obj is None:
+        return default
+    if hasattr(cfg_obj, key):
+        v = getattr(cfg_obj, key)
+        return default if v is None else v
+    if isinstance(cfg_obj, dict):
+        return cfg_obj.get(key, default)
+    return default
+
+
 def _resolve(cfg: AppConfig, maybe_path: str | Path) -> Path:
-    """Resolve absolute paths, or resolve relative paths against project_root."""
     p = Path(maybe_path)
     return p if p.is_absolute() else (cfg.project_root / p).resolve()
 
@@ -70,37 +80,29 @@ def _maybe_plot_births(
             plt.ylabel("Forecast births (float)")
             plt.savefig(figures_dir / f"birth_forecast_{rc}.png", dpi=150, bbox_inches="tight")
             plt.close()
-
     except Exception:
         logger.exception("Birth sanity plotting failed.")
 
 
 def run_forecast(cfg: AppConfig) -> None:
-    """
-    Run the full forecast pipeline:
-        1) Births forecast per region (from best saved model per region)
-        2) Population 0–19 cohort forecast
-        3) Education costs forecast (Fixed and Current bases; DO NOT add them)
-    """
-    # --- Core config ---
-    sqlite_path = getattr(cfg.database, "sqlite_path", None)
-    if sqlite_path is None and isinstance(cfg.database, dict):
-        sqlite_path = cfg.database.get("sqlite_path")
+    # --- DB path ---
+    sqlite_path = _get(cfg.database, "sqlite_path")
     if not sqlite_path:
         raise ValueError("Missing database.sqlite_path in config")
-
     db_path = _resolve(cfg, sqlite_path)
 
-    # forecast horizon
-    start_year = _safe_int(getattr(cfg.forecast, "start_year", None) or cfg.forecast.get("start_year", 2024), 2024)
-    end_year = _safe_int(getattr(cfg.forecast, "end_year", None) or cfg.forecast.get("end_year", 2030), 2030)
+    # --- Forecast horizon ---
+    forecast_cfg = cfg.forecast
+    start_year = _safe_int(_get(forecast_cfg, "start_year", 2024), 2024)
+    end_year = _safe_int(_get(forecast_cfg, "end_year", 2030), 2030)
     if end_year < start_year:
         raise ValueError("forecast.end_year must be >= forecast.start_year")
 
     # --- Output dirs ---
-    metrics_dir = _resolve(cfg, getattr(cfg.paths, "metrics_dir", None) or cfg.paths.get("metrics_dir"))
-    forecasts_dir = _resolve(cfg, getattr(cfg.paths, "forecasts_dir", None) or cfg.paths.get("forecasts_dir"))
-    figures_dir = _resolve(cfg, getattr(cfg.paths, "figures_dir", None) or cfg.paths.get("figures_dir")) / "forecasts" / "births"
+    paths_cfg = cfg.paths
+    metrics_dir = _resolve(cfg, _get(paths_cfg, "metrics_dir"))
+    forecasts_dir = _resolve(cfg, _get(paths_cfg, "forecasts_dir"))
+    figures_dir = _resolve(cfg, _get(paths_cfg, "figures_dir")) / "forecasts" / "births"
 
     metrics_dir.mkdir(parents=True, exist_ok=True)
     forecasts_dir.mkdir(parents=True, exist_ok=True)
@@ -115,18 +117,14 @@ def run_forecast(cfg: AppConfig) -> None:
     best["Region_Code"] = best["Region_Code"].astype("string").str.strip().str.zfill(2)
     best["Region_Name"] = best.get("Region_Name", best["Region_Code"]).astype(str).str.strip()
 
-    include = getattr(cfg.regions, "include", None)
-    if include is None and isinstance(getattr(cfg, "regions", None), dict):
-        include = cfg.regions.get("include")
+    include = _get(cfg.regions, "include")
     if include:
         include = [str(x).strip().zfill(2) for x in include]
         best = best[best["Region_Code"].isin(include)].copy()
 
-    # --- Birth forecasting ---
-    interval_level = 0.95
-    if hasattr(cfg, "forecast") and hasattr(cfg.forecast, "interval_level"):
-        interval_level = float(cfg.forecast.interval_level)
+    interval_level = float(_get(forecast_cfg, "interval_level", 0.95))
 
+    # --- Birth forecasting ---
     births_forecast = predict_births_all_regions(
         best_models_df=best,
         project_root=cfg.project_root,
@@ -135,7 +133,6 @@ def run_forecast(cfg: AppConfig) -> None:
         interval_level=interval_level,
     )
 
-    # Normalize births schema
     births_forecast = births_forecast.copy()
     births_forecast["Region_Code"] = births_forecast["Region_Code"].astype("string").str.strip().str.zfill(2)
     births_forecast["Region_Name"] = births_forecast.get("Region_Name", births_forecast["Region_Code"]).astype(str).str.strip()
@@ -149,15 +146,18 @@ def run_forecast(cfg: AppConfig) -> None:
     write_forecast_artifact(births_forecast, births_out_path)
     logger.info("Saved births forecast: %s", births_out_path)
 
-    # Summary
-    summary_df = (
-        births_forecast.groupby(["Region_Code", "Region_Name", "Model"], as_index=False)["Forecast_Births"]
-        .agg(Forecast_Min="min", Forecast_Max="max", Forecast_Mean="mean")
-        .sort_values(["Region_Code"])
-        .reset_index(drop=True)
-    )
-    summary_df["Forecast_Year_Start"] = int(start_year)
-    summary_df["Forecast_Year_End"] = int(end_year)
+    # --- Summary ---
+    if births_forecast.empty:
+        summary_df = pd.DataFrame(columns=["Region_Code", "Region_Name", "Model", "Forecast_Min", "Forecast_Max", "Forecast_Mean"])
+    else:
+        summary_df = (
+            births_forecast.groupby(["Region_Code", "Region_Name", "Model"], as_index=False)["Forecast_Births"]
+            .agg(Forecast_Min="min", Forecast_Max="max", Forecast_Mean="mean")
+            .sort_values(["Region_Code"])
+            .reset_index(drop=True)
+        )
+        summary_df["Forecast_Year_Start"] = int(start_year)
+        summary_df["Forecast_Year_End"] = int(end_year)
 
     summary_path = metrics_dir / "forecast_summary_births.csv"
     write_forecast_artifact(summary_df, summary_path)
@@ -194,35 +194,31 @@ def run_forecast(cfg: AppConfig) -> None:
     write_forecast_artifact(pop_forecast, pop_out_path)
     logger.info("Saved population forecast: %s", pop_out_path)
 
-    # --- Education costs ---
-    if hasattr(cfg, "costs"):
-        grund_rel = getattr(cfg.costs, "grundskola_cost_table", None)
-        gymn_rel = getattr(cfg.costs, "gymnasieskola_cost_table", None)
-        anchor_max_year = getattr(cfg.costs, "anchor_max_year", None)
-        extrapolation = getattr(cfg.costs, "extrapolation", "carry_forward")
-        annual_growth_rate = float(getattr(cfg.costs, "annual_growth_rate", 0.0))
-    else:
-        cost_cfg = (cfg.raw or {}).get("costs", {}) if isinstance(getattr(cfg, "raw", {}), dict) else {}
-        grund_rel = cost_cfg.get("grundskola_cost_table")
-        gymn_rel = cost_cfg.get("gymnasieskola_cost_table")
-        anchor_max_year = cost_cfg.get("anchor_max_year")
-        extrapolation = cost_cfg.get("extrapolation", "carry_forward")
-        annual_growth_rate = float(cost_cfg.get("annual_growth_rate", 0.0))
+    # --- Costs ---
+    costs_cfg = getattr(cfg, "costs", None)
+    if costs_cfg is None:
+        costs_cfg = _get(cfg.raw, "costs", {})  # fallback
 
+    grund_rel = _get(costs_cfg, "grundskola_cost_table")
+    gymn_rel = _get(costs_cfg, "gymnasieskola_cost_table")
     if not grund_rel or not gymn_rel:
         raise ValueError("Missing grundskola_cost_table / gymnasieskola_cost_table in config")
 
     grund_path = _resolve(cfg, grund_rel)
     gymn_path = _resolve(cfg, gymn_rel)
 
-    grund, gymn = load_cost_tables(grund_path, gymn_path, anchor_max_year=anchor_max_year)
+    grund, gymn = load_cost_tables(
+        grund_path,
+        gymn_path,
+        anchor_max_year=_get(costs_cfg, "anchor_max_year", None),
+    )
 
     costs_df = compute_education_costs(
         pop_forecast=pop_forecast,
         grund=grund,
         gymn=gymn,
-        extrapolation=str(extrapolation),
-        annual_growth_rate=float(annual_growth_rate),
+        extrapolation=str(_get(costs_cfg, "extrapolation", "carry_forward")),
+        annual_growth_rate=float(_get(costs_cfg, "annual_growth_rate", 0.0)),
     )
 
     costs_df = costs_df.copy()
