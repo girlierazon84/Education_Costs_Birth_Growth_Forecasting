@@ -1,6 +1,4 @@
-"""
-src/eduforecast/pipelines/run_etl.py
-"""
+"""src/eduforecast/pipelines/run_etl.py"""
 
 from __future__ import annotations
 
@@ -12,12 +10,16 @@ from typing import Any
 import pandas as pd
 
 from eduforecast.common.config import AppConfig
+from eduforecast.preprocessing.clean_births import clean_births
+from eduforecast.preprocessing.clean_mortality import clean_mortality
+from eduforecast.preprocessing.clean_population import clean_population
 
 
 logger = logging.getLogger(__name__)
 
 
 def _get(cfg_obj: Any, key: str, default: Any = None) -> Any:
+    """Support both dict-style and attribute-style config."""
     if cfg_obj is None:
         return default
     if hasattr(cfg_obj, key):
@@ -37,13 +39,6 @@ def _ensure_dir(path: Path) -> None:
     path.mkdir(parents=True, exist_ok=True)
 
 
-def _zfill_region(series: pd.Series) -> pd.Series:
-    s = series.astype("string").str.strip()
-    # if numeric-looking, keep digits; otherwise keep as-is
-    s = s.str.replace(r"\.0$", "", regex=True)
-    return s.str.zfill(2)
-
-
 def _write_sqlite(df: pd.DataFrame, db_path: Path, table: str) -> None:
     db_path.parent.mkdir(parents=True, exist_ok=True)
     with sqlite3.connect(db_path) as con:
@@ -51,11 +46,53 @@ def _write_sqlite(df: pd.DataFrame, db_path: Path, table: str) -> None:
 
 
 def _read_migration(path: Path) -> pd.DataFrame:
-    # Prefer ';' but fallback to ','
+    """Migration is sometimes semicolon-separated; fallback to comma."""
     try:
         return pd.read_csv(path, sep=";")
     except Exception:
         return pd.read_csv(path)
+
+
+def _clean_migration(migration: pd.DataFrame) -> pd.DataFrame:
+    """
+    Standardize migration to:
+        Region_Code, Region_Name, Age, Year, Number
+    """
+    d = migration.copy()
+    d.columns = [c.strip() for c in d.columns]
+
+    d = d.rename(
+        columns={
+            "Region": "Region_Code",
+            "Total_Migrations": "Number",
+            "År": "Year",
+            "Ar": "Year",
+        }
+    )
+
+    required = {"Region_Code", "Age", "Year", "Number"}
+    missing = required - set(d.columns)
+    if missing:
+        raise KeyError(f"Migration missing columns {sorted(missing)}. Found: {list(d.columns)}")
+
+    d["Region_Code"] = d["Region_Code"].astype("string").str.strip().str.replace(r"\.0$", "", regex=True).str.zfill(2)
+    if "Region_Name" not in d.columns:
+        d["Region_Name"] = d["Region_Code"]
+    d["Region_Name"] = d["Region_Name"].astype(str).str.strip()
+
+    d["Age"] = pd.to_numeric(d["Age"], errors="coerce").astype("Int64")
+    d["Year"] = pd.to_numeric(d["Year"], errors="coerce").astype("Int64")
+    d["Number"] = pd.to_numeric(d["Number"], errors="coerce").astype(float)
+
+    d = d.dropna(subset=["Age", "Year", "Number"]).copy()
+    d["Age"] = d["Age"].astype(int)
+    d["Year"] = d["Year"].astype(int)
+
+    return (
+        d[["Region_Code", "Region_Name", "Age", "Year", "Number"]]
+        .sort_values(["Region_Code", "Age", "Year"])
+        .reset_index(drop=True)
+    )
 
 
 def run_etl(cfg: AppConfig) -> None:
@@ -72,98 +109,34 @@ def run_etl(cfg: AppConfig) -> None:
     db_path = _resolve(cfg, sqlite_path)
 
     # --- Load raw ---
-    births = pd.read_csv(raw_dir / "birth_data_per_region.csv")
-    mortality = pd.read_csv(raw_dir / "mortality_data_per_region.csv")
-    pop_0_16 = pd.read_csv(raw_dir / "population_0_16_years.csv")
-    pop_17_19 = pd.read_csv(raw_dir / "population_17_19_years.csv")
-    migration = _read_migration(raw_dir / "migration_data_per_region.csv")
+    births_raw = pd.read_csv(raw_dir / "birth_data_per_region.csv")
+    mortality_raw = pd.read_csv(raw_dir / "mortality_data_per_region.csv")
+    pop_0_16_raw = pd.read_csv(raw_dir / "population_0_16_years.csv")
+    pop_17_19_raw = pd.read_csv(raw_dir / "population_17_19_years.csv")
+    migration_raw = _read_migration(raw_dir / "migration_data_per_region.csv")
 
-    # --- Region map (prefer migration for names if present) ---
-    if {"Region_Code", "Region_Name"}.issubset(migration.columns):
-        region_map = (
-            migration[["Region_Code", "Region_Name"]]
-            .drop_duplicates()
-            .assign(Region_Code=lambda d: _zfill_region(d["Region_Code"]))
+    # --- Clean using shared preprocessing ---
+    births_clean = clean_births(births_raw)
+    mortality_clean = clean_mortality(mortality_raw)
+
+    pop_all = pd.concat([pop_0_16_raw, pop_17_19_raw], ignore_index=True)
+    population_clean = clean_population(pop_all)
+    migration_clean = _clean_migration(migration_raw)
+
+    # Region map is derived (consistent)
+    region_map = (
+        pd.concat(
+            [
+                births_clean[["Region_Code", "Region_Name"]],
+                mortality_clean[["Region_Code", "Region_Name"]],
+                population_clean[["Region_Code", "Region_Name"]],
+                migration_clean[["Region_Code", "Region_Name"]],
+            ],
+            ignore_index=True,
         )
-    else:
-        region_map = pd.DataFrame(columns=["Region_Code", "Region_Name"])
-
-    # --- Births ---
-    births_clean = births.copy()
-    births_clean = births_clean.rename(columns={"Region": "Region_Code", "Total_Births": "Number"})
-    births_clean["Region_Code"] = _zfill_region(births_clean["Region_Code"])
-    births_clean["Year"] = pd.to_numeric(births_clean["Year"], errors="coerce").astype("Int64")
-    births_clean["Number"] = pd.to_numeric(births_clean["Number"], errors="coerce")
-
-    births_clean = births_clean.dropna(subset=["Year", "Number"]).copy()
-    births_clean["Year"] = births_clean["Year"].astype(int)
-    births_clean["Number"] = births_clean["Number"].astype(float)
-
-    births_clean = births_clean.merge(region_map, on="Region_Code", how="left")
-    births_clean["Region_Name"] = births_clean.get("Region_Name", births_clean["Region_Code"]).astype(str).str.strip()
-    births_clean = births_clean[["Region_Code", "Region_Name", "Year", "Number"]].sort_values(["Region_Code", "Year"])
-
-    # --- Mortality ---
-    mortality_clean = mortality.copy()
-    mortality_clean = mortality_clean.rename(columns={"Region": "Region_Code", "Total_Deaths": "Number"})
-    mortality_clean["Region_Code"] = _zfill_region(mortality_clean["Region_Code"])
-    mortality_clean["Age"] = pd.to_numeric(mortality_clean["Age"], errors="coerce").astype("Int64")
-    mortality_clean["Year"] = pd.to_numeric(mortality_clean["Year"], errors="coerce").astype("Int64")
-    mortality_clean["Number"] = pd.to_numeric(mortality_clean["Number"], errors="coerce")
-
-    mortality_clean = mortality_clean.dropna(subset=["Age", "Year", "Number"]).copy()
-    mortality_clean["Age"] = mortality_clean["Age"].astype(int)
-    mortality_clean["Year"] = mortality_clean["Year"].astype(int)
-    mortality_clean["Number"] = mortality_clean["Number"].astype(float)
-
-    mortality_clean = mortality_clean.merge(region_map, on="Region_Code", how="left")
-    mortality_clean["Region_Name"] = mortality_clean.get("Region_Name", mortality_clean["Region_Code"]).astype(str).str.strip()
-    mortality_clean = mortality_clean[["Region_Code", "Region_Name", "Age", "Year", "Number"]].sort_values(
-        ["Region_Code", "Age", "Year"]
-    )
-
-    # --- Population 0–19 ---
-    pop_all = pd.concat([pop_0_16, pop_17_19], ignore_index=True)
-    population_clean = pop_all.copy()
-    population_clean = population_clean.rename(columns={"Region": "Region_Code", "Total_Population": "Number"})
-    population_clean["Region_Code"] = _zfill_region(population_clean["Region_Code"])
-    population_clean["Age"] = pd.to_numeric(population_clean["Age"], errors="coerce").astype("Int64")
-    population_clean["Year"] = pd.to_numeric(population_clean["Year"], errors="coerce").astype("Int64")
-    population_clean["Number"] = pd.to_numeric(population_clean["Number"], errors="coerce")
-
-    population_clean = population_clean.dropna(subset=["Age", "Year", "Number"]).copy()
-    population_clean["Age"] = population_clean["Age"].astype(int)
-    population_clean["Year"] = population_clean["Year"].astype(int)
-    population_clean["Number"] = population_clean["Number"].astype(float)
-
-    population_clean = population_clean.merge(region_map, on="Region_Code", how="left")
-    population_clean["Region_Name"] = population_clean.get("Region_Name", population_clean["Region_Code"]).astype(str).str.strip()
-    population_clean = population_clean[["Region_Code", "Region_Name", "Age", "Year", "Number"]].sort_values(
-        ["Region_Code", "Age", "Year"]
-    )
-
-    # --- Migration ---
-    migration_clean = migration.copy()
-    migration_clean = migration_clean.rename(columns={"Total_Migrations": "Number"})
-    if "Region_Code" not in migration_clean.columns:
-        migration_clean = migration_clean.rename(columns={"Region": "Region_Code"})
-
-    migration_clean["Region_Code"] = _zfill_region(migration_clean["Region_Code"])
-    migration_clean["Age"] = pd.to_numeric(migration_clean["Age"], errors="coerce").astype("Int64")
-    migration_clean["Year"] = pd.to_numeric(migration_clean["Year"], errors="coerce").astype("Int64")
-    migration_clean["Number"] = pd.to_numeric(migration_clean["Number"], errors="coerce")
-
-    migration_clean = migration_clean.dropna(subset=["Age", "Year", "Number"]).copy()
-    migration_clean["Age"] = migration_clean["Age"].astype(int)
-    migration_clean["Year"] = migration_clean["Year"].astype(int)
-    migration_clean["Number"] = migration_clean["Number"].astype(float)
-
-    if "Region_Name" not in migration_clean.columns:
-        migration_clean = migration_clean.merge(region_map, on="Region_Code", how="left")
-    migration_clean["Region_Name"] = migration_clean.get("Region_Name", migration_clean["Region_Code"]).astype(str).str.strip()
-
-    migration_clean = migration_clean[["Region_Code", "Region_Name", "Age", "Year", "Number"]].sort_values(
-        ["Region_Code", "Age", "Year"]
+        .drop_duplicates()
+        .sort_values("Region_Code")
+        .reset_index(drop=True)
     )
 
     # --- Save processed CSVs ---
@@ -171,7 +144,7 @@ def run_etl(cfg: AppConfig) -> None:
     mortality_clean.to_csv(processed_dir / "mortality_processed.csv", index=False)
     population_clean.to_csv(processed_dir / "population_processed.csv", index=False)
     migration_clean.to_csv(processed_dir / "migration_processed.csv", index=False)
-    region_map.sort_values("Region_Code").to_csv(processed_dir / "region_map.csv", index=False)
+    region_map.to_csv(processed_dir / "region_map.csv", index=False)
 
     # --- Write SQLite tables ---
     _write_sqlite(births_clean, db_path, "birth_data_per_region")
