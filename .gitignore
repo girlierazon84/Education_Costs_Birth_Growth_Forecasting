@@ -7,7 +7,6 @@ __pycache__/
 *.pyd
 *.so
 *.pkl
-*.joblib
 *.pickle
 
 # Virtual environments
@@ -54,22 +53,42 @@ Desktop.ini
 *.log
 
 # =========================
-# Data & artifacts (choose what to keep)
+# Data & artifacts
 # =========================
 
-# Raw downloads / large datasets (usually not committed)
-data/raw/**
+# Ignore generated/intermediate data
 data/interim/**
 data/processed/**
 
-# If you WANT to keep the forecast CSVs in git for Streamlit Cloud,
-# comment OUT the artifacts/** ignore above and use this instead:
-# artifacts/**
-# !artifacts/forecasts/
-# !artifacts/forecasts/*.csv
-# !artifacts/metrics/
-# !artifacts/metrics/*.csv
-# !artifacts/.gitkeep
+# Keep ONLY the raw + external inputs needed for Streamlit Cloud
+# (ignore everything in raw/external by default, then allow-list specific files)
+data/raw/**
+!data/raw/birth_data_per_region.csv
+!data/raw/mortality_data_per_region.csv
+!data/raw/population_0_16_years.csv
+!data/raw/population_17_19_years.csv
+!data/raw/migration_data_per_region.csv
+
+data/external/**
+!data/external/grundskola_costs_per_child.csv
+!data/external/gymnasieskola_costs_per_child.csv
+
+# Artifacts: ignore heavy outputs, keep the lightweight CSV artifacts used by dashboards
+artifacts/**
+!artifacts/forecasts/
+!artifacts/forecasts/*.csv
+!artifacts/metrics/
+!artifacts/metrics/*.csv
+!artifacts/metrics/eda/
+!artifacts/metrics/eda/*.csv
+!artifacts/.gitkeep
+
+# Still ignore heavy artifact types if they appear inside allowed folders
+artifacts/**/*.joblib
+artifacts/**/*.png
+artifacts/**/*.pdf
+artifacts/**/*.parquet
+artifacts/**/*.db
 
 # =========================
 # Build / distribution
