@@ -5,53 +5,35 @@ from __future__ import annotations
 import logging
 import sqlite3
 from pathlib import Path
-from typing import Any, Dict, List, Tuple
+from typing import Any
 
 import joblib
+import matplotlib.pyplot as plt
 import numpy as np
 import pandas as pd
-import matplotlib.pyplot as plt
-from statsmodels.tsa.holtwinters import ExponentialSmoothing
 
 from eduforecast.common.config import AppConfig
-from eduforecast.forecasting.ets_models import ETSModel, NaiveLastModel
+from eduforecast.modeling.baselines import fit_drift, fit_naive_last
+from eduforecast.modeling.evaluation import compute_metrics
+from eduforecast.modeling.selection import pick_best_model
+from eduforecast.modeling.ts_models import fit_ets
+
 
 logger = logging.getLogger(__name__)
 
 
-# ---------------- Metrics ----------------
-def rmse(y_true: np.ndarray, y_pred: np.ndarray) -> float:
-    y_true = np.asarray(y_true, dtype=float)
-    y_pred = np.asarray(y_pred, dtype=float)
-    return float(np.sqrt(np.mean((y_true - y_pred) ** 2)))
-
-
-def mae(y_true: np.ndarray, y_pred: np.ndarray) -> float:
-    y_true = np.asarray(y_true, dtype=float)
-    y_pred = np.asarray(y_pred, dtype=float)
-    return float(np.mean(np.abs(y_true - y_pred)))
-
-
-def smape(y_true: np.ndarray, y_pred: np.ndarray) -> float:
-    y_true = np.asarray(y_true, dtype=float)
-    y_pred = np.asarray(y_pred, dtype=float)
-    denom = (np.abs(y_true) + np.abs(y_pred)) / 2.0
-    denom = np.where(denom == 0, 1.0, denom)
-    return float(np.mean(np.abs(y_true - y_pred) / denom) * 100.0)
-
-
-# -------------- CV splitting --------------
-def last_n_years_cv(years: np.ndarray, n_splits: int) -> List[Tuple[np.ndarray, np.ndarray]]:
+# ---------------- CV splitting ----------------
+def last_n_years_cv(years: np.ndarray, n_splits: int) -> list[tuple[np.ndarray, np.ndarray]]:
     """
     Walk-forward: use the last n_splits years as 1-step test points.
     Each split trains on all years < test_year, tests on test_year.
     """
-    years_sorted = np.array(sorted(set(years.tolist())))
+    years_sorted = np.array(sorted(set(years.tolist())), dtype=int)
     if len(years_sorted) <= n_splits + 3:
         n_splits = max(1, len(years_sorted) - 3)
 
     test_years = years_sorted[-n_splits:]
-    splits: List[Tuple[np.ndarray, np.ndarray]] = []
+    splits: list[tuple[np.ndarray, np.ndarray]] = []
     for ty in test_years:
         train_idx = np.where(years < ty)[0]
         test_idx = np.where(years == ty)[0]
@@ -75,9 +57,7 @@ def _resolve(cfg: AppConfig, maybe_path: str | Path) -> Path:
 
 
 def _get(cfg_obj: Any, key: str, default: Any = None) -> Any:
-    """
-    Support both dict-style and attribute-style config.
-    """
+    """Support both dict-style and attribute-style config."""
     if cfg_obj is None:
         return default
     if hasattr(cfg_obj, key):
@@ -86,33 +66,6 @@ def _get(cfg_obj: Any, key: str, default: Any = None) -> Any:
     if isinstance(cfg_obj, dict):
         return cfg_obj.get(key, default)
     return default
-
-
-# ---------------- Models ----------------
-def fit_naive_last(y_train: np.ndarray) -> NaiveLastModel:
-    return NaiveLastModel(last_value=float(y_train[-1]))
-
-
-def fit_ets(y_train: np.ndarray) -> ETSModel:
-    try:
-        model = ExponentialSmoothing(
-            y_train,
-            trend="add",
-            seasonal=None,
-            damped_trend=True,
-            initialization_method="estimated",
-        )
-        fitted = model.fit(optimized=True)
-        return ETSModel(fitted=fitted)
-    except Exception:
-        model = ExponentialSmoothing(
-            y_train,
-            trend=None,
-            seasonal=None,
-            initialization_method="estimated",
-        )
-        fitted = model.fit(optimized=True)
-        return ETSModel(fitted=fitted)
 
 
 # ---------------- IO ----------------
@@ -126,17 +79,19 @@ def run_train(cfg: AppConfig) -> None:
     sqlite_path = _get(cfg.database, "sqlite_path")
     if not sqlite_path:
         raise ValueError("Missing database.sqlite_path in config")
-
     db_path = _resolve(cfg, sqlite_path)
 
     births = _read_births_sqlite(db_path)
 
-    births["Region_Code"] = births["Region_Code"].astype(str).str.strip().str.zfill(2)
+    # Normalize schema defensively
+    births["Region_Code"] = births["Region_Code"].astype("string").str.strip().str.zfill(2)
     births["Region_Name"] = births.get("Region_Name", births["Region_Code"]).astype(str).str.strip()
     births["Year"] = pd.to_numeric(births["Year"], errors="coerce").astype("Int64")
     births["Number"] = pd.to_numeric(births["Number"], errors="coerce")
+
     births = births.dropna(subset=["Year", "Number"]).copy()
     births["Year"] = births["Year"].astype(int)
+    births["Number"] = births["Number"].astype(float)
 
     start_year = _safe_int(_get(cfg.modeling, "start_year", 1968), 1968)
     births = births[births["Year"] >= start_year].copy()
@@ -146,21 +101,22 @@ def run_train(cfg: AppConfig) -> None:
         include = [str(x).strip().zfill(2) for x in include]
         births = births[births["Region_Code"].isin(include)].copy()
 
-    candidates = _get(cfg.modeling, "candidates", ["baseline_naive", "exp_smoothing"])
+    candidates = _get(cfg.modeling, "candidates", ["baseline_naive", "drift", "exp_smoothing"])
     metric_primary = str(_get(cfg.modeling, "metric_primary", "rmse")).lower()
     cv_cfg = _get(cfg.modeling, "cv", {}) or {}
     n_splits = _safe_int(_get(cv_cfg, "n_splits", 5), 5)
 
-    # Output folders (supports cfg.paths.* OR dict)
+    # Output folders
     models_dir = _resolve(cfg, _get(cfg.paths, "models_dir")) / "births"
     metrics_dir = _resolve(cfg, _get(cfg.paths, "metrics_dir"))
     figures_dir = _resolve(cfg, _get(cfg.paths, "figures_dir")) / "models"
+
     models_dir.mkdir(parents=True, exist_ok=True)
     metrics_dir.mkdir(parents=True, exist_ok=True)
     figures_dir.mkdir(parents=True, exist_ok=True)
 
-    all_rows: List[Dict[str, Any]] = []
-    best_models: Dict[str, Dict[str, Any]] = {}
+    all_rows: list[dict[str, Any]] = []
+    best_models: dict[str, dict[str, Any]] = {}
 
     for (rc, rn), g in births.groupby(["Region_Code", "Region_Name"], dropna=False):
         gg = g.sort_values("Year").copy()
@@ -171,11 +127,12 @@ def run_train(cfg: AppConfig) -> None:
             logger.warning("Duplicates found for Region %s (%s). Fix duplicates before training.", rc, rn)
 
         splits = last_n_years_cv(years, n_splits=n_splits)
-        if len(splits) == 0:
+        if not splits:
             logger.warning("Not enough data for CV in Region %s (%s). Skipping.", rc, rn)
             continue
 
-        region_results: list[tuple[str, Dict[str, Any], list[int], np.ndarray, np.ndarray]] = []
+        region_rows: list[dict[str, Any]] = []
+        region_debug: dict[str, dict[str, Any]] = {}
 
         for model_name in candidates:
             preds: list[float] = []
@@ -189,6 +146,9 @@ def run_train(cfg: AppConfig) -> None:
                 try:
                     if model_name == "baseline_naive":
                         m = fit_naive_last(y_train)
+                        y_pred = m.predict(steps=len(y_test))
+                    elif model_name == "drift":
+                        m = fit_drift(y_train)
                         y_pred = m.predict(steps=len(y_test))
                     elif model_name == "exp_smoothing":
                         m = fit_ets(y_train)
@@ -205,14 +165,11 @@ def run_train(cfg: AppConfig) -> None:
 
             y_true = np.asarray(truths, dtype=float)
             y_pred = np.asarray(preds, dtype=float)
-            valid = np.isfinite(y_true) & np.isfinite(y_pred)
 
-            if valid.sum() == 0:
+            mpack = compute_metrics(y_true, y_pred)
+            if not np.isfinite(mpack.rmse):
                 logger.warning("No valid CV points for %s %s model=%s", rc, rn, model_name)
                 continue
-
-            y_true_v = y_true[valid]
-            y_pred_v = y_pred[valid]
 
             row = {
                 "Region_Code": rc,
@@ -220,32 +177,42 @@ def run_train(cfg: AppConfig) -> None:
                 "Model": model_name,
                 "Start_Year": int(years.min()),
                 "End_Year": int(years.max()),
-                "CV_Points": int(len(y_true_v)),
-                "RMSE": rmse(y_true_v, y_pred_v),
-                "MAE": mae(y_true_v, y_pred_v),
-                "SMAPE": smape(y_true_v, y_pred_v),
+                "CV_Points": int(np.isfinite(y_true).sum()),
+                **mpack.as_dict(),
             }
             all_rows.append(row)
+            region_rows.append(row)
 
-            region_results.append((model_name, row, split_years, y_true, y_pred))
+            # store for plotting / residuals
+            region_debug[model_name] = {
+                "split_years": split_years,
+                "y_true": y_true,
+                "y_pred": y_pred,
+            }
 
-        if not region_results:
+        if not region_rows:
             continue
 
-        def key_fn(item):
-            _, row, *_ = item
-            return row["RMSE"] if metric_primary == "rmse" else row["MAE"]
+        sel = pick_best_model(region_rows, primary=metric_primary if metric_primary in {"rmse", "mae", "smape"} else "rmse")
+        best_name = sel.best_model
 
-        region_results.sort(key=key_fn)
-        best_name, best_row, best_years, best_true, best_pred = region_results[0]
-
-        # fit best on full history and save
+        # Fit best on full history
         if best_name == "baseline_naive":
             best_model = fit_naive_last(y)
+        elif best_name == "drift":
+            best_model = fit_drift(y)
         else:
             best_model = fit_ets(y)
 
-        payload = {
+        # Residuals for PI (use the CV residuals of best model)
+        dbg = region_debug.get(best_name, {})
+        y_true_cv = np.asarray(dbg.get("y_true", []), dtype=float)
+        y_pred_cv = np.asarray(dbg.get("y_pred", []), dtype=float)
+        resid = (y_true_cv - y_pred_cv)
+        resid = resid[np.isfinite(resid)]
+        sigma = float(np.std(resid)) if resid.size > 5 else None
+
+        payload: dict[str, Any] = {
             "model_name": best_name,
             "region_code": rc,
             "region_name": rn,
@@ -253,19 +220,27 @@ def run_train(cfg: AppConfig) -> None:
             "train_year_max": int(years.max()),
             "model": best_model,
         }
+        if resid.size > 10:
+            payload["residuals"] = resid.astype(float)
+        if sigma is not None and np.isfinite(sigma) and sigma > 0:
+            payload["sigma"] = float(sigma)
 
         model_path = models_dir / f"births_{rc}_{best_name}.joblib"
         joblib.dump(payload, model_path)
 
-        # Store relative path for portability
         rel_model_path = model_path.relative_to(cfg.project_root).as_posix()
         best_models[rc] = {"Region_Name": rn, "Best_Model": best_name, "Model_Path": rel_model_path}
 
-        # diagnostic plot
+        # Diagnostic plot: actual + CV preds of best model
         try:
+            dbg = region_debug.get(best_name, {})
+            split_years = dbg.get("split_years", [])
+            y_pred = np.asarray(dbg.get("y_pred", []), dtype=float)
+
             plt.figure()
-            plt.plot(years, y)
-            plt.scatter(best_years, best_pred)
+            plt.plot(years, y)  # actual
+            if len(split_years) == len(y_pred) and len(split_years) > 0:
+                plt.scatter(split_years, y_pred)  # CV preds
             plt.title(f"Births: {rc} {rn} | Best: {best_name}")
             plt.xlabel("Year")
             plt.ylabel("Births (Number)")
