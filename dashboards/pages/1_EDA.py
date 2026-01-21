@@ -9,7 +9,7 @@ import pandas as pd
 import streamlit as st
 import plotly.express as px
 
-from eduforecast.io.readers import read_births_raw, read_costs_per_child
+from eduforecast.io.readers import read_births_raw, read_costs_per_child_raw
 from eduforecast.preprocessing.clean_births import clean_births
 from eduforecast.preprocessing.clean_costs import clean_costs_per_child
 
@@ -47,8 +47,8 @@ def load_births() -> pd.DataFrame:
 
 @st.cache_data(show_spinner=False)
 def load_costs_external() -> tuple[pd.DataFrame, pd.DataFrame]:
-    grund_raw = read_costs_per_child(project_root() / "data" / "external" / "grundskola_costs_per_child.csv")
-    gymn_raw = read_costs_per_child(project_root() / "data" / "external" / "gymnasieskola_costs_per_child.csv")
+    grund_raw = read_costs_per_child_raw(project_root() / "data" / "external" / "grundskola_costs_per_child.csv")
+    gymn_raw = read_costs_per_child_raw(project_root() / "data" / "external" / "gymnasieskola_costs_per_child.csv")
     return clean_costs_per_child(grund_raw), clean_costs_per_child(gymn_raw)
 
 
@@ -70,7 +70,7 @@ def main() -> None:
         reg_opts = ["(National total)"] + [f"{r.Region_Code} — {r.Region_Name}" for r in regs.itertuples(index=False)]
         reg_sel = st.selectbox("Region", reg_opts, index=0)
 
-        show_table = st.checkbox("Show raw births table", value=False)
+        show_table = st.checkbox("Show births table", value=False)
 
     bdf = births[(births["Year"] >= year_range[0]) & (births["Year"] <= year_range[1])].copy()
 
