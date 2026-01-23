@@ -36,6 +36,37 @@ def to_csv_bytes(df: pd.DataFrame) -> bytes:
 
 
 @st.cache_data(show_spinner=False)
+def load_region_lookup_from_births() -> dict[str, str]:
+    """
+    Build a Region_Code -> Region_Name mapping from the raw births file.
+    This prevents '01 - 01' UI bugs when Region_Name is missing in forecast artifacts.
+    """
+    root = project_root()
+    f = root / "data" / "raw" / "birth_data_per_region.csv"
+    if not f.exists():
+        return {}
+
+    b = pd.read_csv(f, dtype={"Region_Code": "string"})
+    if "Region_Code" not in b.columns:
+        return {}
+
+    b["Region_Code"] = b["Region_Code"].astype("string").str.strip().str.replace(r"\.0$", "", regex=True).str.zfill(2)
+
+    # Prefer an explicit Region_Name column if present, otherwise we can't infer it
+    if "Region_Name" not in b.columns:
+        return {}
+
+    b["Region_Name"] = b["Region_Name"].astype(str).str.strip()
+    # take first non-empty name per region
+    b = (
+        b[b["Region_Name"].notna() & (b["Region_Name"].str.len() > 0)]
+        .drop_duplicates(subset=["Region_Code"])
+        .sort_values("Region_Code")
+    )
+    return dict(zip(b["Region_Code"].tolist(), b["Region_Name"].tolist()))
+
+
+@st.cache_data(show_spinner=False)
 def load_costs_csv() -> pd.DataFrame:
     root = project_root()
     f = root / "artifacts" / "forecasts" / "education_costs_forecast_2024_2030.csv"
@@ -44,7 +75,16 @@ def load_costs_csv() -> pd.DataFrame:
 
     df = pd.read_csv(f, dtype={"Region_Code": "string"})
     df["Region_Code"] = df["Region_Code"].astype("string").str.strip().str.zfill(2)
+
+    # Normalize Region_Name
     df["Region_Name"] = df.get("Region_Name", df["Region_Code"]).astype(str).str.strip()
+
+    # Fix cases where Region_Name is missing / equals Region_Code (=> "01 - 01" bug)
+    lookup = load_region_lookup_from_births()
+    bad_name = (df["Region_Name"].isna()) | (df["Region_Name"].str.len() == 0) | (df["Region_Name"] == df["Region_Code"])
+    if bad_name.any() and lookup:
+        df.loc[bad_name, "Region_Name"] = df.loc[bad_name, "Region_Code"].map(lookup).fillna(df.loc[bad_name, "Region_Name"])
+
     df["School_Type"] = df["School_Type"].astype(str).str.strip().str.lower()
     df["Year"] = pd.to_numeric(df["Year"], errors="coerce").astype("Int64")
 
@@ -85,7 +125,11 @@ def main() -> None:
         year_range = st.slider("Year range", year_min, year_max, (year_min, year_max), step=1)
 
         regions = df[["Region_Code", "Region_Name"]].drop_duplicates().sort_values("Region_Code")
-        region_options = ["(All regions)"] + [f"{r.Region_Code} — {r.Region_Name}" for r in regions.itertuples(index=False)]
+
+        # ✅ Display format requested: "01 - Stockholm"
+        region_options = ["(All regions)"] + [
+            f"{r.Region_Code} - {r.Region_Name}" for r in regions.itertuples(index=False)
+        ]
         region_sel = st.selectbox("Region", region_options, index=0)
 
         school_options = ["(Both)"] + sorted(df["School_Type"].unique().tolist())
@@ -97,7 +141,7 @@ def main() -> None:
     fdf = df[(df["Year"] >= year_range[0]) & (df["Year"] <= year_range[1])].copy()
 
     if region_sel != "(All regions)":
-        rc = region_sel.split("—")[0].strip()
+        rc = region_sel.split("-")[0].strip()
         fdf = fdf[fdf["Region_Code"] == rc].copy()
 
     if school_sel != "(Both)":
