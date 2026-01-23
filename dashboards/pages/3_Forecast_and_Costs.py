@@ -9,6 +9,9 @@ import pandas as pd
 import plotly.express as px
 import streamlit as st
 
+from eduforecast.io.readers import read_births_raw
+from eduforecast.preprocessing.clean_births import clean_births
+
 
 def project_root() -> Path:
     # dashboards/pages/3_Forecast_and_Costs.py -> dashboards/pages -> dashboards -> project root
@@ -35,35 +38,42 @@ def to_csv_bytes(df: pd.DataFrame) -> bytes:
     return buf.getvalue().encode("utf-8")
 
 
+def _looks_like_bad_region_name(name: str, code: str) -> bool:
+    """
+    Catch common bad values that cause UI like '01 - 01' or '01 - 1'.
+    """
+    n = str(name).strip()
+    c = str(code).strip()
+    if n == "" or n.lower() == "nan":
+        return True
+    if n == c:
+        return True
+    # numeric-only labels like "1" or "01"
+    if n.isdigit():
+        return True
+    return False
+
+
 @st.cache_data(show_spinner=False)
 def load_region_lookup_from_births() -> dict[str, str]:
     """
-    Build a Region_Code -> Region_Name mapping from the raw births file.
-    This prevents '01 - 01' UI bugs when Region_Name is missing in forecast artifacts.
+    Build Region_Code -> Region_Name mapping using the SAME cleaning pipeline as 1_EDA.py.
+    This ensures names like 'Stockholms län' instead of '1'.
     """
     root = project_root()
     f = root / "data" / "raw" / "birth_data_per_region.csv"
     if not f.exists():
         return {}
 
-    b = pd.read_csv(f, dtype={"Region_Code": "string"})
-    if "Region_Code" not in b.columns:
-        return {}
+    raw = read_births_raw(f)
+    births = clean_births(raw)  # <- critical: ensures canonical Region_Name
 
-    b["Region_Code"] = b["Region_Code"].astype("string").str.strip().str.replace(r"\.0$", "", regex=True).str.zfill(2)
+    regs = births[["Region_Code", "Region_Name"]].drop_duplicates().sort_values("Region_Code")
+    # Prefer longest / most descriptive name if duplicates exist
+    regs["Region_Name"] = regs["Region_Name"].astype(str).str.strip()
+    regs = regs.sort_values(["Region_Code", "Region_Name"], ascending=[True, False]).drop_duplicates("Region_Code")
 
-    # Prefer an explicit Region_Name column if present, otherwise we can't infer it
-    if "Region_Name" not in b.columns:
-        return {}
-
-    b["Region_Name"] = b["Region_Name"].astype(str).str.strip()
-    # take first non-empty name per region
-    b = (
-        b[b["Region_Name"].notna() & (b["Region_Name"].str.len() > 0)]
-        .drop_duplicates(subset=["Region_Code"])
-        .sort_values("Region_Code")
-    )
-    return dict(zip(b["Region_Code"].tolist(), b["Region_Name"].tolist()))
+    return dict(zip(regs["Region_Code"].tolist(), regs["Region_Name"].tolist()))
 
 
 @st.cache_data(show_spinner=False)
@@ -76,14 +86,14 @@ def load_costs_csv() -> pd.DataFrame:
     df = pd.read_csv(f, dtype={"Region_Code": "string"})
     df["Region_Code"] = df["Region_Code"].astype("string").str.strip().str.zfill(2)
 
-    # Normalize Region_Name
+    # Normalize Region_Name (may be missing or wrong in artifacts)
     df["Region_Name"] = df.get("Region_Name", df["Region_Code"]).astype(str).str.strip()
 
-    # Fix cases where Region_Name is missing / equals Region_Code (=> "01 - 01" bug)
     lookup = load_region_lookup_from_births()
-    bad_name = (df["Region_Name"].isna()) | (df["Region_Name"].str.len() == 0) | (df["Region_Name"] == df["Region_Code"])
-    if bad_name.any() and lookup:
-        df.loc[bad_name, "Region_Name"] = df.loc[bad_name, "Region_Code"].map(lookup).fillna(df.loc[bad_name, "Region_Name"])
+    if lookup:
+        bad = df.apply(lambda r: _looks_like_bad_region_name(r["Region_Name"], r["Region_Code"]), axis=1)
+        if bad.any():
+            df.loc[bad, "Region_Name"] = df.loc[bad, "Region_Code"].map(lookup).fillna(df.loc[bad, "Region_Name"])
 
     df["School_Type"] = df["School_Type"].astype(str).str.strip().str.lower()
     df["Year"] = pd.to_numeric(df["Year"], errors="coerce").astype("Int64")
@@ -126,10 +136,8 @@ def main() -> None:
 
         regions = df[["Region_Code", "Region_Name"]].drop_duplicates().sort_values("Region_Code")
 
-        # ✅ Display format requested: "01 - Stockholm"
-        region_options = ["(All regions)"] + [
-            f"{r.Region_Code} - {r.Region_Name}" for r in regions.itertuples(index=False)
-        ]
+        # ✅ Display: "01 - Stockholm" (or "01 - Stockholms län" depending on your cleaned names)
+        region_options = ["(All regions)"] + [f"{r.Region_Code} - {r.Region_Name}" for r in regions.itertuples(index=False)]
         region_sel = st.selectbox("Region", region_options, index=0)
 
         school_options = ["(Both)"] + sorted(df["School_Type"].unique().tolist())
