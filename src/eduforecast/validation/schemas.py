@@ -91,7 +91,7 @@ def assert_schema(df: pd.DataFrame, spec: SchemaSpec) -> None:
             f"{spec.name}: missing columns {missing}. Found: {list(df.columns)}"
         )
 
-    # 2. ✅ TYPE VALIDATION LAYER: Verify data types against structural rules
+    # 2. TYPE VALIDATION LAYER: Verify data types against structural rules
     if spec.dtype_hints:
         for col, hint in spec.dtype_hints.items():
             if col not in df.columns:
@@ -106,9 +106,8 @@ def assert_schema(df: pd.DataFrame, spec: SchemaSpec) -> None:
             elif hint == "float":
                 if not ("float" in actual_type.lower() or "double" in actual_type.lower()):
                     raise TypeError(f"{spec.name}: Column '{col}' expected float type, got {actual_type}")
-            # ✅ TYPSÄKRING: Inkludera explicit stöd för råa 'str'-klasser bredvid object/string
+            # ✅ FIXED: Re-introduced the missing conditional 'elif' hook to make this code reachable
             elif hint == "string":
-                # Accepterar standard-pandas 'object', den dedikerade typen 'string' samt råa 'str'-representationer
                 actual_lower = actual_type.lower()
                 if not ("string" in actual_lower or "object" in actual_lower or "str" in actual_lower):
                     raise TypeError(f"{spec.name}: Column '{col}' expected string/object type, got {actual_type}")
