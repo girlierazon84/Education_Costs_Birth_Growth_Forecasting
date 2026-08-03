@@ -106,8 +106,13 @@ def assert_schema(df: pd.DataFrame, spec: SchemaSpec) -> None:
             elif hint == "float":
                 if not ("float" in actual_type.lower() or "double" in actual_type.lower()):
                     raise TypeError(f"{spec.name}: Column '{col}' expected float type, got {actual_type}")
-            # ✅ FIXED: Re-introduced the missing conditional 'elif' hook to make this code reachable
             elif hint == "string":
+                # ✅ DET ULTIMATA FELSÄKRA KONTRAKTET:
+                # Kontrollerar först textsträngar via text-matchning
                 actual_lower = actual_type.lower()
-                if not ("string" in actual_lower or "object" in actual_lower or "str" in actual_lower):
-                    raise TypeError(f"{spec.name}: Column '{col}' expected string/object type, got {actual_type}")
+                is_valid_string_text = ("string" in actual_lower or "object" in actual_lower or "str" in actual_lower or actual_type == "O")
+
+                # Om text-matchningen inte räcker, kör vi Pandas inbyggda, universella API-funktioner som fallback
+                if not is_valid_string_text:
+                    if not pd.api.types.is_string_dtype(df[col]) and not pd.api.types.is_object_dtype(df[col]):
+                        raise TypeError(f"{spec.name}: Column '{col}' expected string/object type, got {actual_type}")
