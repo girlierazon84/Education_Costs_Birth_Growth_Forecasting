@@ -17,12 +17,12 @@ features:
   region_code_width: 2
   keep_region_names: true
 
-  # Optional feature switches (safe defaults)
-  use_migration: false
-  use_mortality: false
-  use_cohort_transitions: false
+  # ✅ FIXED: Force these flags to true to enable the cohort component loops
+  use_migration: true
+  use_mortality: true
+  use_cohort_transitions: true
 
-  # Time-series feature engineering
+  # Time-series feature engineering (used if you scale up to ML pipelines)
   lags:
     enabled: true
     values: [1, 2, 3, 5]

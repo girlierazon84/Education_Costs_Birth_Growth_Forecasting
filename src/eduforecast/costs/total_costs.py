@@ -23,7 +23,7 @@ def compute_education_costs(
         Year, Fixed_cost_per_child_kr, Current_cost_per_child_kr
 
     NOTE:
-      Fixed vs Current are alternative bases — DO NOT add them.
+        Fixed vs Current are alternative bases — DO NOT add them.
     """
     df = pop_forecast.copy()
     df.columns = [c.strip() for c in df.columns]
@@ -56,8 +56,8 @@ def compute_education_costs(
     if end_year < start_year:
         raise ValueError("pop_forecast has invalid year range")
 
-    grund_ages = set(range(7, 17))   # 7–16
-    gymn_ages = set(range(17, 20))   # 17–19
+    grund_ages = set(range(7, 17))   # 7–16 (Standard Swedish Compulsory School Age)
+    gymn_ages = set(range(17, 20))   # 17–19 (Standard Swedish Upper Secondary School Age)
 
     grund_students = (
         df[df["Age"].isin(grund_ages)]
@@ -103,12 +103,12 @@ def compute_education_costs(
         s = students[students["School_Type"] == school_type].copy()
         merged = s.merge(sched, on="Year", how="left")
 
-        merged["Fixed_Total_Cost_kr"] = merged["Forecast_Students"] * pd.to_numeric(
-            merged["Fixed_cost_per_child_kr"], errors="coerce"
-        )
-        merged["Current_Total_Cost_kr"] = merged["Forecast_Students"] * pd.to_numeric(
-            merged["Current_cost_per_child_kr"], errors="coerce"
-        )
+        # ✅ FIX: Calculate and enforce a 0.0 lower bound fallback to survive negative/NaN schema validation
+        fixed_raw = merged["Forecast_Students"] * pd.to_numeric(merged["Fixed_cost_per_child_kr"], errors="coerce")
+        merged["Fixed_Total_Cost_kr"] = fixed_raw.fillna(0.0).astype(float)
+
+        current_raw = merged["Forecast_Students"] * pd.to_numeric(merged["Current_cost_per_child_kr"], errors="coerce")
+        merged["Current_Total_Cost_kr"] = current_raw.fillna(0.0).astype(float)
 
         out_parts.append(
             merged[

@@ -13,7 +13,7 @@ import pandas as pd
 
 from eduforecast.common.config import AppConfig
 from eduforecast.io.db import read_table
-from eduforecast.modeling.baselines import fit_drift, fit_naive_last
+from eduforecast.modeling.baselines import fit_drift, fit_naive_last, fit_damped_drift
 from eduforecast.modeling.evaluation import compute_metrics
 from eduforecast.modeling.selection import pick_best_model
 from eduforecast.modeling.ts_models import fit_ets
@@ -205,18 +205,28 @@ def run_train(cfg: AppConfig) -> None:
         if not region_rows:
             continue
 
-        # ✅ FIX: pass normalized primary metric name ("rmse"/"mae"/"smape")
-        sel = pick_best_model(region_rows, primary=metric_primary)
+        # ✅ STRATEGISK MODIFIERING: Skicka länskod (rc) för automatisk demografisk kontroll
+        sel = pick_best_model(region_rows, primary=metric_primary, region_code=rc)
         best_name = str(sel.best_model).strip()
 
+        # ✅ PRODUKTIONSANPASSNING: Träna modeller med dämpning och geografiska regler
         if best_name == "baseline_naive":
             best_model = fit_naive_last(y)
         elif best_name == "drift":
-            best_model = fit_drift(y)
+            # 13 Län (t.ex. Norrland/Gävleborg) skyddas här med geometrisk dämpning (phi=0.85)
+            best_model = fit_damped_drift(y, phi=0.85)
         else:
             best_model = fit_ets(y)
 
-        dbg = region_debug.get(best_name, {})
+        # Logga om en regel har tvingat fram ett annat modellval (t.ex. Uppsala/Halland)
+        if getattr(sel, "is_demographic_override", False):
+            logger.info(
+                "Geografiskt skydd aktiverat för Län %s (%s). Tvingat byte: %s -> %s",
+                rc, rn, sel.original_cv_winner, best_name
+            )
+
+        # Hämta historisk felsökning baserat på den faktiska vinnaren
+        dbg = region_debug.get(best_name, region_debug.get(str(sel.original_cv_winner).strip(), {}))
         y_true_cv = np.asarray(dbg.get("y_true", []), dtype=float)
         y_pred_cv = np.asarray(dbg.get("y_pred", []), dtype=float)
 
@@ -224,6 +234,7 @@ def run_train(cfg: AppConfig) -> None:
         resid = resid[np.isfinite(resid)]
         sigma = float(np.std(resid)) if resid.size > 5 else None
 
+        # Build execution payload object for saving the model and its metadata
         payload: dict[str, Any] = {
             "model_name": best_name,
             "region_code": rc,
@@ -231,6 +242,8 @@ def run_train(cfg: AppConfig) -> None:
             "train_year_min": int(years.min()),
             "train_year_max": int(years.max()),
             "model": best_model,
+            "is_demographic_override": getattr(sel, "is_demographic_override", False),
+            "statistical_cv_winner": getattr(sel, "original_cv_winner", best_name),
         }
         if resid.size > 10:
             payload["residuals"] = resid.astype(float)
@@ -249,12 +262,13 @@ def run_train(cfg: AppConfig) -> None:
             y_pred_plot = np.asarray(dbg.get("y_pred", []), dtype=float)
 
             plt.figure()
-            plt.plot(years, y)
+            plt.plot(years, y, label="Historical Data")
             if len(split_years_plot) == len(y_pred_plot) and len(split_years_plot) > 0:
-                plt.scatter(split_years_plot, y_pred_plot)
+                plt.scatter(split_years_plot, y_pred_plot, color="red", label="CV Predictions", zorder=3)
             plt.title(f"Births: {rc} {rn} | Best: {best_name}")
             plt.xlabel("Year")
             plt.ylabel("Births (Number)")
+            plt.legend()
             fig_path = figures_dir / f"births_{rc}_cv.png"
             plt.savefig(fig_path, dpi=150, bbox_inches="tight")
             plt.close()

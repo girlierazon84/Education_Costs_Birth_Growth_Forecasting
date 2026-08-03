@@ -11,13 +11,10 @@ costs:
   extrapolation: "growth_rate"
   annual_growth_rate: 0.025
 
-  # Anchor year for keeping a realistic split between "fixed" and "current" bases.
-  # We use an anchor where both series exist and are meaningful (e.g., 2021).
-  # If null, pipeline uses the latest available row from each cost table.
-  anchor_year: 2021
+  # ✅ FIXED: Renamed property to anchor_max_year to match the python cost_per_child script contracts
+  anchor_max_year: 2021
 
   # Age ranges used for counting "students" from population forecasts.
-  # Adjust if you change your cohort logic.
   grundskola_ages: [7, 16]      # inclusive range 7–16
   gymnasieskola_ages: [17, 19]  # inclusive range 17–19
 

@@ -15,6 +15,7 @@ from pathlib import Path
 from typing import Literal
 
 import pandas as pd
+import numpy as np
 
 from eduforecast.io.readers import read_costs_per_child_raw
 from eduforecast.preprocessing.clean_costs import clean_costs_per_child
@@ -84,46 +85,48 @@ def cost_schedule_for_years(
     if d.empty:
         raise ValueError("Cost table is empty after cleaning.")
 
-    # Ensure expected columns exist (clean_costs_per_child may keep only what exists)
+    # Create a local copy to isolate modifications safely
+    d = d.copy()
+
+    # ✅ FIX 2: Attach Cost_Year directly to the source dataframe before matching
+    d["Cost_Year"] = d["Year"].astype(int)
+
+    # ✅ FIX 1: Enforce explicit floating-point initialization instead of pd.NA
     for col in ["Fixed_cost_per_child_kr", "Current_cost_per_child_kr"]:
         if col not in d.columns:
-            d[col] = pd.NA
+            d[col] = np.nan
+        else:
+            d[col] = pd.to_numeric(d[col], errors="coerce").astype(float)
 
     years = pd.DataFrame({"Year": list(range(start_year, end_year + 1))})
 
-    # Use merge_asof to pick the latest cost row with Year <= target Year
+    # Primary match: Locate the latest cost configuration with historical Year <= forecast target Year
     sched = pd.merge_asof(years, d, on="Year", direction="backward")
 
-    # If start_year is earlier than first known cost year, forward-fill from earliest
-    if sched["Fixed_cost_per_child_kr"].isna().all() and sched["Current_cost_per_child_kr"].isna().all():
-        sched = pd.merge_asof(years, d, on="Year", direction="forward")
-        sched["Cost_Year"] = int(d["Year"].min())
-    else:
-        # Determine which cost year was used by recomputing Cost_Year with the same asof join
-        d_cost = d[["Year"]].rename(columns={"Year": "Cost_Year"})
-        cost_year = pd.merge_asof(years, d_cost, left_on="Year", right_on="Cost_Year", direction="backward")
-
-        # forward fill Cost_Year if needed (when target year < min cost year)
-        if cost_year["Cost_Year"].isna().any():
-            cost_year = pd.merge_asof(years, d_cost, left_on="Year", right_on="Cost_Year", direction="forward")
-
-        sched["Cost_Year"] = pd.to_numeric(cost_year["Cost_Year"], errors="coerce")
+    # ✅ FIX 2 (Continued): Handle edge cases where target forecast start_year < oldest database year
+    if sched["Cost_Year"].isna().any():
+        forward_sched = pd.merge_asof(years, d, on="Year", direction="forward")
+        missing_mask = sched["Cost_Year"].isna()
+        sched.loc[missing_mask, :] = forward_sched.loc[missing_mask, :]
 
     method = str(method).strip().lower()
     if method == "growth_rate":
-        yrs = (pd.to_numeric(sched["Year"], errors="coerce") - pd.to_numeric(sched["Cost_Year"], errors="coerce")).clip(lower=0)
-        yrs = yrs.fillna(0).astype(int)
+        # Calculate years elapsed between the forecast point and the reference cost anchor year
+        yrs = (sched["Year"].astype(int) - sched["Cost_Year"].astype(int)).clip(lower=0)
         growth = (1.0 + float(annual_growth_rate)) ** yrs
 
+        # Compounded calculation runs safely on explicit floating-point arrays
         for col in ["Fixed_cost_per_child_kr", "Current_cost_per_child_kr"]:
-            sched[col] = pd.to_numeric(sched[col], errors="coerce") * growth
+            sched[col] = sched[col].astype(float) * growth
 
     elif method != "carry_forward":
         raise ValueError(f"Unknown method: {method}")
 
-    # Stable types
-    sched["Year"] = pd.to_numeric(sched["Year"], errors="coerce").astype("Int64").astype(int)
-    sched["Cost_Year"] = pd.to_numeric(sched["Cost_Year"], errors="coerce").astype("Int64").astype(int)
+    # Solidify strict casting conventions to pass downstream EDU_COSTS_FORECAST schema validators
+    sched["Year"] = sched["Year"].astype(int)
+    sched["Cost_Year"] = sched["Cost_Year"].astype(int)
+    sched["Fixed_cost_per_child_kr"] = pd.to_numeric(sched["Fixed_cost_per_child_kr"], errors="coerce").astype(float)
+    sched["Current_cost_per_child_kr"] = pd.to_numeric(sched["Current_cost_per_child_kr"], errors="coerce").astype(float)
 
     cols = ["Year", "Fixed_cost_per_child_kr", "Current_cost_per_child_kr", "Cost_Year"]
     return sched[cols].sort_values("Year").reset_index(drop=True)

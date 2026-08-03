@@ -2,12 +2,10 @@
 # Modeling and evaluation configuration.
 
 modeling:
-  # Candidate models implemented in src/eduforecast/modeling/
+  # ✅ FIXED: Mapped precisely to the active src/eduforecast
   candidates:
     - "baseline_naive"
-    - "linear_regression"
-    - "random_forest"
-    - "arima"
+    - "drift"
     - "exp_smoothing"
 
   # Primary metric used to select "best" model per region

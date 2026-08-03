@@ -30,13 +30,22 @@ def _safe_int(x: Any, default: int) -> int:
 
 
 def _get(cfg_obj: Any, key: str, default: Any = None) -> Any:
+    """
+    Safely support both dictionary-style lookups and object attribute-style lookups.
+    Ensures nested configurations read from dictionaries without throwing AttributeError.
+    """
     if cfg_obj is None:
         return default
+
+    # 1. Check if the object is a standard dictionary first
+    if isinstance(cfg_obj, dict):
+        return cfg_obj.get(key, default)
+
+    # 2. Fall back to object attribute namespace (AppConfig properties)
     if hasattr(cfg_obj, key):
         v = getattr(cfg_obj, key)
         return default if v is None else v
-    if isinstance(cfg_obj, dict):
-        return cfg_obj.get(key, default)
+
     return default
 
 

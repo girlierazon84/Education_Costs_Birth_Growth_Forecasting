@@ -134,15 +134,23 @@ def forecast_population_0_19(
 
         for (rc, rn), g in current.groupby(["Region_Code", "Region_Name"]):
             b0 = float(births_map.get((rc, year), 0.0))
+            s0 = float(surv_map.get((rc, 0), 1.0))  # Fetch infant survival rate
             mig0 = float(mig_map.get((rc, 0, year), 0.0))
-            next_rows.append((rc, rn, 0, year, b0 + mig0))
+
+            # ✅ FIX A: Apply survival rate to births entering the system at Age 0
+            # ✅ FIX B: Apply lower bound protection via max(..., 0.0)
+            age_0_pop = max((b0 * s0) + mig0, 0.0)
+            next_rows.append((rc, rn, 0, year, age_0_pop))
 
             for age in range(1, 20):
                 prev_age = age - 1
                 prev_pop = float(g.loc[g["Age"] == prev_age, "Forecast_Population"].sum())
                 s = float(surv_map.get((rc, prev_age), 1.0))
                 mig_a = float(mig_map.get((rc, age, year), 0.0))
-                next_rows.append((rc, rn, age, year, prev_pop * s + mig_a))
+
+                # ✅ FIX B: Prevent negative populations if out-migration exceeds living cohort sizes
+                cohort_pop = max((prev_pop * s) + mig_a, 0.0)
+                next_rows.append((rc, rn, age, year, cohort_pop))
 
         year_df = pd.DataFrame(
             next_rows,

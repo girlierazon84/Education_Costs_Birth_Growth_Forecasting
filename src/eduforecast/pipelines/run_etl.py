@@ -146,6 +146,7 @@ def run_etl(cfg: AppConfig) -> None:
     validate_mortality_canonical(mortality_clean).raise_if_failed()
     validate_population_canonical(population_clean).raise_if_failed()
 
+    # ✅ CORRECTION 1: Removed nonnegative_cols=("Number",) to support negative net migration
     validate_df(
         migration_clean,
         schema=MIGRATION_CANONICAL,
@@ -154,7 +155,6 @@ def run_etl(cfg: AppConfig) -> None:
         age_col="Age",
         age_min=0,
         age_max=120,
-        nonnegative_cols=("Number",),
         unique_keys=("Region_Code", "Age", "Year"),
     ).raise_if_failed()
 
@@ -187,11 +187,15 @@ def run_etl(cfg: AppConfig) -> None:
     write_table(db_path, "population_0_19_per_region", population_clean, if_exists="replace", index=False)
     write_table(db_path, "migration_data_per_region", migration_clean, if_exists="replace", index=False)
 
-    # Helpful indexes for faster reads / joins
+    # ✅ CORRECTION 2: Optimized query indices adding dynamic Year-based compound filters
     ensure_index(db_path, "birth_data_per_region", ["Region_Code", "Year"], unique=False)
     ensure_index(db_path, "mortality_data_per_region", ["Region_Code", "Age", "Year"], unique=False)
     ensure_index(db_path, "population_0_19_per_region", ["Region_Code", "Age", "Year"], unique=False)
     ensure_index(db_path, "migration_data_per_region", ["Region_Code", "Age", "Year"], unique=False)
+
+    # Explicit single-year lookup optimization
+    ensure_index(db_path, "population_0_19_per_region", ["Year"], unique=False)
+    ensure_index(db_path, "migration_data_per_region", ["Year"], unique=False)
 
     logger.info("ETL complete. SQLite written to: %s", db_path)
     logger.info("Processed CSVs written to: %s", processed_dir)

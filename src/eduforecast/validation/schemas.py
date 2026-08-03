@@ -80,9 +80,34 @@ EDU_COSTS_FORECAST = SchemaSpec(
 
 
 def assert_schema(df: pd.DataFrame, spec: SchemaSpec) -> None:
-    """Raise a KeyError if required columns are missing."""
+    """
+    Raise a KeyError if required columns are missing,
+    and raise a TypeError if types diverge from SchemaSpec definitions.
+    """
+    # 1. Structural column check
     missing = _missing_cols(df, spec.required_cols)
     if missing:
         raise KeyError(
             f"{spec.name}: missing columns {missing}. Found: {list(df.columns)}"
         )
+
+    # 2. ✅ TYPE VALIDATION LAYER: Verify data types against structural rules
+    if spec.dtype_hints:
+        for col, hint in spec.dtype_hints.items():
+            if col not in df.columns:
+                continue
+
+            actual_type = str(df[col].dtype)
+
+            if hint == "int":
+                # Accept both standard int64 and pandas Nullable Int64
+                if not ("int" in actual_type.lower() or "integer" in actual_type.lower()):
+                    raise TypeError(f"{spec.name}: Column '{col}' expected integer type, got {actual_type}")
+            elif hint == "float":
+                if not ("float" in actual_type.lower() or "double" in actual_type.lower()):
+                    raise TypeError(f"{spec.name}: Column '{col}' expected float type, got {actual_type}")
+            elif hint == "string":
+                # Accept object (standard pandas string placement) and specialized 'string' types
+                if not ("string" in actual_type.lower() or "object" in actual_type.lower()):
+                    raise TypeError(f"{spec.name}: Column '{col}' expected string/object type, got {actual_type}")
+
