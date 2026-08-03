@@ -111,3 +111,4 @@ def assert_schema(df: pd.DataFrame, spec: SchemaSpec) -> None:
                 actual_lower = actual_type.lower()
                 if not ("string" in actual_lower or "object" in actual_lower or "str" in actual_lower):
                     raise TypeError(f"{spec.name}: Column '{col}' expected string/object type, got {actual_type}")
+
