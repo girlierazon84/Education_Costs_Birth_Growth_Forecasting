@@ -106,10 +106,9 @@ def assert_schema(df: pd.DataFrame, spec: SchemaSpec) -> None:
             elif hint == "float":
                 if not ("float" in actual_type.lower() or "double" in actual_type.lower()):
                     raise TypeError(f"{spec.name}: Column '{col}' expected float type, got {actual_type}")
-            # ✅ KORRIGERING: Lagt till stöd för "str" vid textvalidering
+            # ✅ TYPSÄKRING: Inkludera explicit stöd för råa 'str'-klasser bredvid object/string
             elif hint == "string":
-                # Accepterar standard-pandas 'object', den dedikerade typen 'string' samt råa 'str'-klasser
-                if not ("string" in actual_type.lower() or "object" in actual_type.lower() or "str" in actual_type.lower()):
+                # Accepterar standard-pandas 'object', den dedikerade typen 'string' samt råa 'str'-representationer
+                actual_lower = actual_type.lower()
+                if not ("string" in actual_lower or "object" in actual_lower or "str" in actual_lower):
                     raise TypeError(f"{spec.name}: Column '{col}' expected string/object type, got {actual_type}")
-
-
