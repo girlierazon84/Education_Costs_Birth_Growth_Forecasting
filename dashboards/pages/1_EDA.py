@@ -75,7 +75,13 @@ def to_csv_bytes(df: pd.DataFrame) -> bytes:
 @st.cache_data(show_spinner=False)
 def load_births() -> pd.DataFrame:
     raw = read_births_raw(project_root() / "data" / "raw" / "birth_data_per_region.csv")
-    return clean_births(raw)
+    df = clean_births(raw)
+
+    # ✅ FIX FÖR MOLNET: Tvinga textkolumnerna till explicit 'string'-typ 
+    # Detta kringgår hur Linux/Windows tolkar råa str-objekt och rensar cachen permanent
+    df["Region_Code"] = df["Region_Code"].astype("string")
+    df["Region_Name"] = df["Region_Name"].astype("string")
+    return df
 
 
 @st.cache_data(show_spinner=False)
