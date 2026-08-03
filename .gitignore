@@ -85,7 +85,6 @@ artifacts/**
 
 # Still ignore heavy artifact types if they appear inside allowed folders
 artifacts/**/*.joblib
-artifacts/**/*.png
 artifacts/**/*.pdf
 artifacts/**/*.parquet
 artifacts/**/*.db
